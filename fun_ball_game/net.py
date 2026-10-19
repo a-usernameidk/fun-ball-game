@@ -29,7 +29,7 @@ USER_AGENT = "FunBallGame/4.3"
 # The game's online server (your Cloudflare Worker). Everyone who plays this copy of the
 # game uses it automatically: players just host a room and share the code.
 # Put your Worker's address here, e.g. "https://fun-ball-game.yourname.workers.dev"
-GAME_SERVER = ""
+GAME_SERVER = "https://fun-ball-game.berf.workers.dev"
 
 
 def server_url(settings):
