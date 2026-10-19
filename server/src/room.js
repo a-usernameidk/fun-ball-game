@@ -9,8 +9,19 @@
 import { Sim } from "./sim.js";
 
 const TICK_MS = 33;          // ~30 physics ticks per second
-const SNAPSHOT_EVERY = 3;    // send balls every 3rd tick (~10 per second)
 const STATS_EVERY = 30;      // send stats about once a second
+const BALANCE_EVERY = 150;   // re-balance cloud power about every 5 seconds
+
+// Fewer snapshots per second when there are lots of balls (players' games smooth the gaps).
+// Energy used per second: 0.25 when calm, 1.0 at full load (a full bar lasts 1h of mayhem
+// or about 4h of calm building with the default 60-minute bar).
+function drainPerSecond(load) {
+  return 0.25 + 0.75 * Math.max(0, Math.min(1, load));
+}
+
+function snapshotEvery(balls) {
+  return balls <= 3000 ? 3 : balls <= 6000 ? 4 : 5;
+}
 const COLORS = [[0, 255, 204], [255, 46, 136], [255, 204, 0], [120, 160, 255], [80, 255, 120],
                 [255, 140, 40], [200, 120, 255], [255, 255, 255]];
 
@@ -23,14 +34,18 @@ export function limitsFrom(env) {
   return {
     maxPlayers: intVar(env, "ROOM_MAX_PLAYERS", 8),
     msgRate: intVar(env, "MSG_RATE", 60),               // messages per second per player
-    spawnRate: intVar(env, "SPAWN_RATE", 500),          // balls per second per player
+    spawnRate: intVar(env, "SPAWN_RATE", 2000),          // balls per second per player
     maxMsgBytes: intVar(env, "MAX_MSG_KB", 1024) * 1024,
-    maxBalls: intVar(env, "CLOUD_MAX_BALLS", 2000),
-    maxSendBalls: intVar(env, "CLOUD_MAX_SEND_BALLS", 2000),
+    maxBalls: intVar(env, "CLOUD_MAX_BALLS", 10000),        // a room alone on a quiet day gets this
+    minBalls: intVar(env, "CLOUD_MIN_BALLS", 1000),         // a room never drops below this
+    poolBalls: intVar(env, "CLOUD_POOL_BALLS", 20000),      // shared by all cloud rooms running at once
+    roomKBps: intVar(env, "CLOUD_ROOM_KBPS", 6000),         // ball data a room may stream, all players combined
+    dailyHours: parseFloat(env.CLOUD_DAILY_HOURS ?? "20") || 0, // cloud-room hours per day (0 = no limit)
+    maxSendBalls: intVar(env, "CLOUD_MAX_SEND_BALLS", 10000),
     maxBlocks: intVar(env, "CLOUD_MAX_BLOCKS", 300),
     maxSubsteps: intVar(env, "CLOUD_MAX_SUBSTEPS", 3),
     workBudget: intVar(env, "CLOUD_WORK_BUDGET", 60000),  // collision checks per tick
-    sessionMinutes: intVar(env, "CLOUD_SESSION_MINUTES", 20),
+    energyMinutes: intVar(env, "CLOUD_ENERGY_MINUTES", 60),  // a full energy bar = this many minutes of mayhem
     maxCloudRooms: intVar(env, "CLOUD_MAX_ROOMS", 5),
   };
 }
@@ -189,15 +204,18 @@ export class Room {
       ws.send(JSON.stringify({ t: "cloud", on: true }));
       return;
     }
-    const lease = await this.limiter("acquire");
+    this.lastBalance = 0;
+    const lease = await this.limiter("acquire", 0);
     if (!lease.ok) {
       ws.send(JSON.stringify({
         t: "cloud", on: false,
-        reason: `The cloud is busy (${this.limits.maxCloudRooms} cloud rooms already running). Try again in a bit.`,
+        reason: lease.reason === "tired"
+          ? "The cloud is resting until tomorrow (daily limit reached). Your PC is running the physics."
+          : `The cloud is busy (${this.limits.maxCloudRooms} cloud rooms already running). Try again in a bit.`,
       }));
       return;
     }
-    const sim = new Sim(this.limits);
+    const sim = new Sim({ ...this.limits });
     const d = data.d || {};
     sim.setTypes(d.kinds, d.types);
     sim.setSettings(d.settings);
@@ -207,7 +225,13 @@ export class Room {
     }
     this.sim = sim;
     this.ticks = 0;
+    this.load = undefined;
+    this.energy = this.maxEnergy = this.limits.energyMinutes * 60;  // in "seconds at full load"
+    this.drainMult = 1;
     this.started = Date.now();
+    this.lastBalance = this.started;
+    await this.balance("renew");
+    if (!this.sim) return;
     // everyone stops simulating locally; the cloud is the host now
     for (const s of this.state.getWebSockets()) {
       const a = s.deserializeAttachment();
@@ -221,23 +245,75 @@ export class Room {
     const sim = this.sim;
     if (!sim) return;
     if (!this.state.getWebSockets().length) { this.stopCloud("everyone left"); return; }
-    if (Date.now() - this.started > this.limits.sessionMinutes * 60000) {
-      this.stopCloud(`the ${this.limits.sessionMinutes} minute cloud session limit was reached`);
+    if (this.energy <= 0) {
+      this.stopCloud("this session's cloud energy ran out (start a new one any time)");
       return;
     }
     sim.step(TICK_MS / (1000 / 60));
     this.ticks++;
+    // Energy drains with what the room is doing *right now*: going crazy burns it about 4x
+    // faster than calm building, so you can go wild for a bit and then make something chill
+    // without wasting the server. More cloud rooms or a busy day make it drain faster.
+    const load = Math.min(1, sim.work / this.limits.workBudget);
+    this.energy -= drainPerSecond(load) * this.drainMult * (TICK_MS / 1000);
+    // smoothed load for display (roughly the last 10 seconds)
+    this.load = this.load === undefined ? load : this.load + (load - this.load) * 0.003;
     for (const ev of sim.events.splice(0)) this.broadcast(ev);
-    if (this.ticks % SNAPSHOT_EVERY === 0) this.broadcast(sim.snapshot());
+    if (this.ticks % snapshotEvery(sim.balls.length) === 0) this.broadcast(sim.snapshot());
     if (this.ticks % STATS_EVERY === 0) {
       this.broadcast({
-        t: "cloud_stats", balls: sim.balls.length, max: sim.maxBalls(), work: sim.work,
-        budget: this.limits.workBudget, overloaded: sim.overloaded, escapes: sim.stats.escapes,
-        shed: sim.stats.shed, kinds: sim.kinds,
-        left: Math.max(0, Math.round((this.limits.sessionMinutes * 60000 - (Date.now() - this.started)) / 1000)),
+        t: "cloud_stats", balls: sim.balls.length, max: sim.maxBalls(), cap: sim.limits.maxBalls,
+        top: this.limits.maxBalls, power: this.power, why: this.why, rooms: this.rooms,
+        load: Math.round(100 * (this.load || 0)),
+        energy: Math.max(0, Math.round((100 * this.energy) / this.maxEnergy)),
+        calm: Math.round(Math.max(0, this.energy) / (drainPerSecond(0) * this.drainMult)),
+        work: sim.work, budget: this.limits.workBudget, overloaded: sim.overloaded,
+        escapes: sim.stats.escapes, shed: sim.stats.shed, kinds: sim.kinds,
+        left: Math.round(Math.max(0, this.energy) / (drainPerSecond(this.load || 0) * this.drainMult)),
       });
     }
-    if (this.ticks % (30 * 60) === 0) this.limiter("renew");
+    if (this.ticks % BALANCE_EVERY === 0) this.balance("renew");
+  }
+
+  // Work out this room's share of the cloud: how many balls it may simulate and how long
+  // its session lasts, based on how many cloud rooms are running, how many players are in
+  // this room and how much cloud time has been used today.
+  async balance(op) {
+    const now = Date.now();
+    const add = this.lastBalance ? (now - this.lastBalance) / 1000 : 0;
+    this.lastBalance = now;
+    const lease = await this.limiter(op, add);
+    const sim = this.sim;
+    if (!sim) return lease;
+    if (!lease.ok) {
+      if (lease.reason === "tired" || op === "renew") this.stopCloud("the cloud ran out of power for today");
+      return lease;
+    }
+    const L = this.limits;
+    const rooms = Math.max(1, lease.active);
+    const players = Math.max(1, this.players().length);
+    const day = lease.budget ? lease.used / lease.budget : 0;
+    if (lease.budget && day >= 1) { this.stopCloud("the cloud is resting until tomorrow (daily limit reached)"); return lease; }
+    // a busy day turns everyone down gently: full power until half the daily time is used
+    const dayFactor = day < 0.5 ? 1 : Math.max(0.25, 1 - (day - 0.5) * 1.5);
+    let cap = Math.min(L.maxBalls, L.poolBalls / rooms) * dayFactor;
+    // every player has to be sent every ball, so more players means fewer balls each
+    const hz = 30 / snapshotEvery(cap);
+    cap = Math.min(cap, (L.roomKBps * 1024) / (players * 16 * hz));
+    cap = Math.round(Math.max(L.minBalls, Math.min(L.maxBalls, cap)));
+    sim.limits = { ...sim.limits, maxBalls: cap, maxSendBalls: Math.min(cap, L.maxSendBalls) };
+    this.cap = cap;
+    this.power = Math.round((100 * cap) / L.maxBalls);
+    this.rooms = rooms;
+    const why = [];
+    if (rooms === 1) why.push("you're the only cloud room right now");
+    else why.push(`${rooms} cloud rooms are sharing the power`);
+    if (players > 1) why.push(`split between ${players} players`);
+    if (dayFactor < 1) why.push("it's been a busy day, so power is turned down");
+    this.why = why.join(", ");
+    // sharing the cloud with other rooms, or a busy day, makes energy drain faster
+    this.drainMult = (rooms <= 1 ? 1 : rooms <= 3 ? 2 : 3) * (dayFactor < 1 ? 2 : 1);
+    return lease;
   }
 
   stopCloud(reason) {
@@ -246,7 +322,7 @@ export class Room {
     this.timer = null;
     const state = this.cloudState();
     this.sim = null;
-    this.limiter("release");
+    this.limiter("release", this.lastBalance ? (Date.now() - this.lastBalance) / 1000 : 0);
     // hand hosting back to the first player
     const sockets = this.state.getWebSockets();
     let hostId = null;
@@ -260,13 +336,17 @@ export class Room {
     if (hostId) this.broadcast({ t: "host", id: hostId });
   }
 
-  async limiter(op) {
+  async limiter(op, add = 0) {
     try {
       const stub = this.env.LIMITER.get(this.env.LIMITER.idFromName("global"));
-      const res = await stub.fetch(`https://limiter/${op}?room=${encodeURIComponent(this.code)}&max=${this.limits.maxCloudRooms}`);
+      const q = new URLSearchParams({
+        room: this.code, max: this.limits.maxCloudRooms, add: add.toFixed(1),
+        budget: Math.round(this.limits.dailyHours * 3600),
+      });
+      const res = await stub.fetch(`https://limiter/${op}?${q}`);
       return await res.json();
     } catch (e) {
-      return { ok: false };
+      return { ok: false, reason: "error" };
     }
   }
 

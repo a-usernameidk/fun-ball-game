@@ -1084,7 +1084,8 @@ class SandboxScene:
             (Button("UNDO", self.undo, tip="Undo (Ctrl+Z)"), 62),
             (Button(self._cloud_label, self.toggle_cloud, color=self._cloud_color,
                     tip="Who runs the physics: PC = your computer (offline), CLOUD = the game's server. "
-                        "Click to switch."), 74),
+                        "The % is how much cloud power you get: 100% when you're the only one using it. "
+                        "Click to switch."), 96),
             (Button("SETTINGS", self.app.open_settings, tip="FPS, ball limit, graphics, sound (O)"), 92),
             (Button("HELP", lambda: setattr(self, "show_help", not self.show_help), tip="Controls (H)"), 58),
             (Button("MENU", self.to_menu, tip="Back to the main menu (progress is auto-saved)"), 62),
@@ -1636,7 +1637,8 @@ class SandboxScene:
     # --- PC / CLOUD physics switch ----------------------------------------------
     def _cloud_label(self):
         if self.net and self.net.cloud:
-            return "CLOUD"
+            p = (self.net.cloud_stats or {}).get("power")
+            return f"CLOUD {p}%" if p is not None else "CLOUD"
         if self.solo_cloud:
             return "CLOUD..."
         return "PC"
@@ -1730,13 +1732,21 @@ class SandboxScene:
         st = self.net.cloud_stats if self.net else None
         if not st:
             return "Waiting for the server..."
-        load = 100 * st.get("work", 0) / max(1, st.get("budget", 1))
-        txt = (f"Server balls: {st['balls']} / {st['max']}\nServer load: {load:.0f}%\n"
-               f"Session time left: {st['left'] // 60}:{st['left'] % 60:02d}")
+
+        def mins(sec):
+            sec = int(sec)
+            return f"{sec // 3600}h {sec % 3600 // 60:02d}m" if sec >= 3600 else f"{sec // 60} min"
+        energy = st.get("energy", 100)
+        bar = "#" * round(energy / 10) + "-" * (10 - round(energy / 10))
+        txt = (f"Cloud power: {st.get('power', 100)}%  (up to {st.get('cap', st['max']):,} balls)\n"
+               f"Why: {st.get('why') or 'starting up'}\n"
+               f"Energy: [{bar}] {energy}%\n"
+               f"Lasts {mins(st.get('left', 0))} at this pace, {mins(st.get('calm', 0))} if you take it easy\n"
+               f"Server load right now: {st.get('load', 0)}%   Balls: {st['balls']:,}")
+        if self.net.spawn_queue:
+            txt += f"\nSending balls to the cloud... {len(self.net.spawn_queue):,} to go"
         if st.get("overloaded"):
             txt += "\nOverloaded! Removing balls to keep up."
-        if st.get("shed"):
-            txt += f"\nBalls removed for load: {st['shed']}"
         return txt
 
     def toast(self, text, color=ACCENT):
@@ -2024,7 +2034,7 @@ class SandboxScene:
     def _start_spray(self):
         self.spray_t = 0.0
         if pygame.key.get_mods() & pygame.KMOD_SHIFT:
-            self._spawn_at_mouse(self.s.burst_size, max(self.s.spray_size, 40.0))
+            self._spawn_at_mouse(self.s.burst_size, max(self.s.spray_size, 40.0, self._spread(self.s.burst_size)))
         else:
             self._spawn_at_mouse(1)
 
@@ -2047,20 +2057,31 @@ class SandboxScene:
     def _room_left(self, n):
         """Don't build a huge list of balls that the ball limit would throw away anyway."""
         if self.net and self.net.cloud:
-            cap = (self.net.limits or {}).get("maxBalls", 2000)
+            cap = (self.net.cloud_stats or {}).get("cap") or (self.net.limits or {}).get("maxBalls", 2000)
             return min(n, cap)
         if self.s.limit_action == "Delete Oldest" or self.s.unlimited_balls:
             return min(n, int(min(self.s.ball_limit(), 100000)))
         return max(0, min(n, int(self.s.ball_limit()) - len(self.world.balls)))
 
+    def _spread(self, n, inside_ring=False):
+        """How wide to spread n balls so a big spawn isn't one giant pile."""
+        if n <= 20:
+            return 3.0
+        r = self.s.ball_radius * 1.15 * math.sqrt(n)
+        if inside_ring and self.world.rings:
+            r = min(r, max(3.0, self.world.rings[0].radius - self.s.ball_radius * 2))
+        return r
+
     def spawn_center(self, n):
         n = self._room_left(n)
+        spread = self._spread(n, inside_ring=True)
         out = []
         for _ in range(n):
             a = random.uniform(0, TAU)
             sp = self.s.spawn_speed * random.uniform(0.66, 1.33)
-            out.append((random.uniform(-3, 3), random.uniform(-3, 3), math.cos(a) * sp, math.sin(a) * sp,
-                        self.s.spawn_type))
+            d = math.sqrt(random.random()) * spread
+            pa = random.uniform(0, TAU)
+            out.append((math.cos(pa) * d, math.sin(pa) * d, math.cos(a) * sp, math.sin(a) * sp, self.s.spawn_type))
         self.emit_spawns(out)
 
     def _rain(self, frames):
@@ -2454,7 +2475,7 @@ class SettingsOverlay:
             if ok and isinstance(data, dict) and data.get("game") == "fun-ball-game":
                 lim = data.get("limits", {})
                 self.test_status = (f"Connected! Cloud limits: {lim.get('maxBalls')} balls, "
-                                    f"{lim.get('maxBlocks')} blocks, {lim.get('sessionMinutes')} min sessions, "
+                                    f"{lim.get('maxBlocks')} blocks, {lim.get('energyMinutes')} min energy bar, "
                                     f"{lim.get('maxCloudRooms')} cloud rooms at once.")
                 self.test_color = ACCENT
             else:

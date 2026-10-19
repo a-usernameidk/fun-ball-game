@@ -243,6 +243,8 @@ class Session:
         self.chat = []                  # [name, text, color, age]
         self.timers = {"blocks": 0.0, "settings": 0.0, "cursor": 0.0, "balls": 0.0}
         self.next_nid = 1
+        self.spawn_queue = []           # balls waiting to be sent (rate limited)
+        self.spawn_budget = 0.0
         self.status = "Connecting..."
         self.ended = None
 
@@ -271,13 +273,25 @@ class Session:
 
     # --- outgoing ------------------------------------------------------
     def send_spawns(self, items):
+        """Queue balls for the room. They're sent at the server's allowed rate in tick()."""
         pal = COLOR_SCHEMES.get(self.s.color_scheme) or [(255, 255, 255)]
-        out = []
         for x, y, vx, vy, kind in items:
             c = BALL_TYPES.get(kind, {}).get("color") or random.choice(pal)
-            out.append([round(x, 1), round(y, 1), round(vx, 2), round(vy, 2), kind, list(c)])
-        for i in range(0, len(out), 200):
-            self.send({"t": "spawn", "b": out[i:i + 200]})
+            self.spawn_queue.append([round(x, 1), round(y, 1), round(vx, 2), round(vy, 2), kind, list(c)])
+
+    def _flush_spawns(self, dt):
+        if not self.spawn_queue:
+            self.spawn_budget = 0.0
+            return
+        rate = self.limits.get("spawnRate", 500) * 0.9  # stay just under the server's limit
+        self.spawn_budget = min(self.spawn_budget + rate * dt, rate)
+        n = min(int(self.spawn_budget), len(self.spawn_queue))
+        if n <= 0:
+            return
+        self.spawn_budget -= n
+        chunk, self.spawn_queue = self.spawn_queue[:n], self.spawn_queue[n:]
+        for i in range(0, len(chunk), 200):
+            self.send({"t": "spawn", "b": chunk[i:i + 200]})
 
     def send_boom(self, x, y, r, p):
         self.send({"t": "boom", "x": round(x, 1), "y": round(y, 1), "r": r, "p": p})
@@ -342,6 +356,7 @@ class Session:
         if t["settings"] >= 0.5:
             t["settings"] = 0.0
             self._sync_settings()
+        self._flush_spawns(dt)
         if t["cursor"] >= 0.1:
             t["cursor"] = 0.0
             x, y = self.scene.mouse_w
@@ -464,24 +479,32 @@ class Session:
         for r, a in zip(self.world.rings, angles):
             r.angle = a
         kinds = (self.cloud_stats or {}).get("kinds") or BALL_ORDER
-        old = {getattr(b, "nid", 0): b for b in self.world.balls}
+        old = {b.nid: b for b in self.world.balls}
+        get = old.get
         new = []
+        append = new.append
         trail = self.s.trail_length
         for x, y, vx, vy, nid, r4, ki, cr, cg, cb, fl in struct.iter_unpack("<hhhhHBBBBBB", data[o:o + count * 16]):
-            vx, vy = vx / 100.0, vy / 100.0
+            b = get(nid)
             kind = kinds[ki] if ki < len(kinds) else "normal"
-            b = old.get(nid)
             if b is None or b.kind != kind:
-                b = Ball(x, y, vx, vy, 1, (cr, cg, cb), kind if kind in BALL_TYPES else "normal", trail)
+                b = Ball(x, y, 0, 0, 1, (cr, cg, cb), kind if kind in BALL_TYPES else "normal", trail)
                 b.nid = nid
-            elif abs(b.x - x) + abs(b.y - y) > 80:
+            elif (b.x - x) ** 2 + (b.y - y) ** 2 > 6400:
                 b.history.clear()
-            b.x, b.y, b.vx, b.vy = float(x), float(y), vx, vy
-            b.r = r4 / 4.0
-            b.color = (cr, cg, cb)
-            b.ghost = bool(fl & 1)
-            b.frozen = 1.0 if fl & 2 else 0.0
-            new.append(b)
+            b.x = x
+            b.y = y
+            b.vx = vx * 0.01
+            b.vy = vy * 0.01
+            b.r = r4 * 0.25
+            if b.color[0] != cr or b.color[1] != cg or b.color[2] != cb:
+                b.color = (cr, cg, cb)
+            if fl:
+                b.ghost = bool(fl & 1)
+                b.frozen = 1.0 if fl & 2 else 0.0
+            elif b.ghost or b.frozen:
+                b.ghost, b.frozen = False, 0.0
+            append(b)
         self.world.balls = new
         self.world.paused = False
 
