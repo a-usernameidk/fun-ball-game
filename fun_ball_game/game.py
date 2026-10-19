@@ -1163,6 +1163,14 @@ class SandboxScene:
         widgets = [Grid(tiles, 3, 80)]
         if tab == "Balls":
             s = self.s
+            widgets = [
+                NumberInput("Spawn amount", lambda: s.burst_size, lambda v: setattr(s, "burst_size", v), 1, 100000,
+                            "Type how many balls you want and press Enter. Shift+click, B and the +N button "
+                            "use this amount too."),
+                Button(lambda: f"Spawn {s.burst_size:,} balls", lambda: self.spawn_center(s.burst_size),
+                       color=ACCENT, height=32, tip="Spawns them in the centre. Shift+click spawns them at the mouse."),
+                Spacer(2),
+            ] + widgets
             widgets += [
                 Spacer(4),
                 Toggle("Escapes spawn this type", lambda: s.spawn_type == self.ball_kind,
@@ -1173,8 +1181,6 @@ class SandboxScene:
                              "How many balls per second you spray while holding the mouse."),
                 self._slider("Spray brush size", "spray_size", 0, 400, 5,
                              "Spread the spray over a circle this big."),
-                self._slider("Burst (Shift+click, B)", "burst_size", 1, 1000, 1,
-                             "Shift+click spawns this many at once. B and the +N button spawn them in the centre."),
                 Toggle("Ball rain (R)", lambda: self.rain, lambda v: setattr(self, "rain", v),
                        tip="Balls fall from the top of the screen nonstop."),
                 self._slider("Rain rate /sec", "rain_rate", 1, 500, 1),
@@ -1246,6 +1252,9 @@ class SandboxScene:
                 Row(Button("+1", lambda: self.spawn_center(1)),
                     Button("+10", lambda: self.spawn_center(10)),
                     Button("+100", lambda: self.spawn_center(100))),
+                Row(NumberInput("Custom", lambda: s.burst_size, lambda v: setattr(s, "burst_size", v), 1, 100000,
+                                "Type any amount, press Enter"),
+                    Button("Spawn", lambda: self.spawn_center(s.burst_size), color=ACCENT, height=32)),
                 Header("World"),
                 self._toggle("World walls", "world_walls", "Bounce balls off the edge of the world."),
                 self._slider("World width", "world_width", 600, 8000, 100),
@@ -2020,6 +2029,7 @@ class SandboxScene:
             self._spawn_at_mouse(1)
 
     def _spawn_at_mouse(self, n=1, radius=None):
+        n = self._room_left(n)
         wx, wy = self.mouse_w
         kind = self.tool[1] if self.tool[0] == "ball" else self.ball_kind
         radius = self.s.spray_size if radius is None else radius
@@ -2034,7 +2044,17 @@ class SandboxScene:
                         math.cos(a) * sp + mvx * 0.5, math.sin(a) * sp + mvy * 0.5, kind))
         self.emit_spawns(out)
 
+    def _room_left(self, n):
+        """Don't build a huge list of balls that the ball limit would throw away anyway."""
+        if self.net and self.net.cloud:
+            cap = (self.net.limits or {}).get("maxBalls", 2000)
+            return min(n, cap)
+        if self.s.limit_action == "Delete Oldest" or self.s.unlimited_balls:
+            return min(n, int(min(self.s.ball_limit(), 100000)))
+        return max(0, min(n, int(self.s.ball_limit()) - len(self.world.balls)))
+
     def spawn_center(self, n):
+        n = self._room_left(n)
         out = []
         for _ in range(n):
             a = random.uniform(0, TAU)
