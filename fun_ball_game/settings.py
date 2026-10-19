@@ -155,6 +155,7 @@ class Settings:
     autosave: bool = True
 
     # --- online ------------------------------------------------------------
+    auto_update: bool = True     # download new versions from GitHub automatically
     server_url: str = ""         # your Cloudflare Worker, e.g. https://fun-ball-game.you.workers.dev
     player_name: str = ""
 
@@ -188,6 +189,7 @@ class Settings:
 PREF_FIELDS = ("sound", "volume", "fps_limit", "show_fps", "max_balls", "unlimited_balls",
                "limit_action", "max_particles", "detail_threshold", "autosave", "glow",
                "particles", "screen_shake", "trails", "trail_length", "substeps",
-               "spray_rate", "spray_size", "burst_size", "rain_rate", "server_url", "player_name")
+               "spray_rate", "spray_size", "burst_size", "rain_rate", "server_url", "player_name",
+               "auto_update")
 
 FPS_OPTIONS = [30, 45, 60, 75, 90, 120, 144, 165, 240, 360, 0]

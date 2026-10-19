@@ -14,6 +14,8 @@ from .balls import BALL_ORDER, BALL_TYPES
 from .presets import PRESETS
 from .render import Renderer
 from . import net as N
+from . import __version__
+from . import updater as U
 from . import worlds as W
 from .settings import (ACCENT, ACCENT2, BG, BORDER, COLOR_SCHEMES, DANGER, FPS_OPTIONS,
                        LIMIT_ACTIONS, PANEL, PANEL_LIGHT, TEXT, TEXT_DIM, THEME_ORDER, THEMES, WARN,
@@ -161,6 +163,9 @@ class App:
         self.ui.sound = self.audio.play
         self.achievements = Achievements(self.profile.get("achievements"))
         W.migrate_autosave()
+        self.updater = U.Updater()
+        self._update_told = False
+        self.updater.check(install=self.settings.auto_update)
         self.running = True
         self.scene = MenuScene(self)
 
@@ -209,6 +214,10 @@ class App:
         self.save_profile()
         self.running = False
 
+    def restart_for_update(self):
+        self.quit()
+        U.restart()
+
     def frame(self, events=None):
         dt = self.clock.tick(self.settings.fps_limit) / 1000.0  # fps_limit 0 = uncapped
         frames = min(dt * 60.0, 3.0)
@@ -245,6 +254,10 @@ class App:
         self.ui.mouse = pygame.mouse.get_pos()
         self.ui.tip = None
         N.poll()
+        if self.updater.state == "installed" and not self._update_told:
+            self._update_told = True
+            if isinstance(self.scene, SandboxScene):
+                self.scene.toast("Update installed! Restart from the main menu to use it.", WARN)
         self.scene.update(frames, dt)
         self.scene.draw(self.screen)
         if self.overlay:
@@ -485,6 +498,15 @@ class MenuScene:
             for it in items:
                 y += it.layout(x, y, bw) + 12
                 self.widgets.append(it)
+            up = self.app.updater
+            if up.state == "available":
+                b = Button(f"UPDATE TO v{U.version_str(up.latest)}", up.install, color=ACCENT, height=36, size=14)
+                b.layout(W_ - 16 - 240, 44, 240)
+                self.widgets.append(b)
+            elif up.state == "installed":
+                b = Button("RESTART TO UPDATE", self.app.restart_for_update, color=WARN, height=36, size=14)
+                b.layout(W_ - 16 - 240, 44, 240)
+                self.widgets.append(b)
         elif self.mode == "worlds":
             r = self._panel_rect()
             lw = int(r.w * 0.56)
@@ -802,7 +824,8 @@ class MenuScene:
             ui.text(surf, "FUN BALL GAME", (W_ // 2 + 3 - i * 2, title_y + bob + 3 - i * 2), size, col, True, "center")
         ui.text(surf, "FUN BALL GAME", (W_ // 2, title_y + bob), size, ACCENT, True, "center")
         if self.mode == "main":
-            ui.text(surf, "v4.3  -  Pygame Sandbox Edition", (W_ // 2, title_y + 52), 18, ACCENT2, True, "center")
+            ui.text(surf, f"v{__version__}  -  Pygame Sandbox Edition", (W_ // 2, title_y + 52), 18, ACCENT2, True,
+                    "center")
             n_blocks = sum(len(v) for v in B.CATEGORIES.values())
             ui.text(surf, f"{n_blocks} blocks & items  -  {len(BALL_TYPES)} ball types  -  "
                     f"{len(THEMES)} world themes  -  {len(PRESETS)} levels",
@@ -810,6 +833,11 @@ class MenuScene:
             got = len(self.app.achievements.unlocked)
             ui.text(surf, f"Achievements: {got}/{len(ACHIEVEMENTS)}", (W_ // 2, H - 30), 14,
                     WARN, False, "center")
+            ui.text(surf, f"v{__version__}", (14, H - 26), 13, TEXT_DIM)
+            up = self.app.updater
+            if up.state in ("available", "installing", "installed", "error") and up.message:
+                ui.text(surf, up.message, (W_ - 16, 18), 14, ACCENT if up.state != "error" else TEXT_DIM, True,
+                        "topright")
         elif self.mode == "worlds":
             r = self._panel_rect()
             panel(surf, r, (16, 16, 26))
@@ -971,6 +999,8 @@ class SandboxScene:
         self.rain = False
         self.rain_t = 0.0
         self.net = None   # online room (multiplayer / cloud physics), see net.py
+        self.solo_cloud = False   # we opened a private room just to use cloud physics
+        self._solo_was_cloud = False
         self.join_code = ""
         self.share_name = ""
         self.share_desc = ""
@@ -1052,6 +1082,9 @@ class SandboxScene:
             (Button("CLEAR MAP", self.clear_blocks, color=(90, 30, 45), text_color=TEXT,
                     tip="Delete every block (can be undone)"), 96),
             (Button("UNDO", self.undo, tip="Undo (Ctrl+Z)"), 62),
+            (Button(self._cloud_label, self.toggle_cloud, color=self._cloud_color,
+                    tip="Who runs the physics: PC = your computer (offline), CLOUD = the game's server. "
+                        "Click to switch."), 74),
             (Button("SETTINGS", self.app.open_settings, tip="FPS, ball limit, graphics, sound (O)"), 92),
             (Button("HELP", lambda: setattr(self, "show_help", not self.show_help), tip="Controls (H)"), 58),
             (Button("MENU", self.to_menu, tip="Back to the main menu (progress is auto-saved)"), 62),
@@ -1566,7 +1599,8 @@ class SandboxScene:
             return
         code = N.new_room_code()
         self.net = N.Session(self, N.server_url(self.s), code, self.s.player_name, creator=True, cloud=cloud)
-        self.toast(f"Hosting room {code}. Tell your friends the code!")
+        if not self.solo_cloud:
+            self.toast(f"Hosting room {code}. Tell your friends the code!")
         self._build_right()
 
     def join_room(self, code):
@@ -1580,12 +1614,45 @@ class SandboxScene:
         self.toast(f"Joining room {code}...")
         self._build_right()
 
-    def leave_room(self):
+    def leave_room(self, quiet=False):
         if self.net:
             self.net.close()
             self.net = None
-            self.toast("Left the room")
+            self.world.rebuild_rings()  # recompute which ring each ball is in
+            self.solo_cloud = False
+            if not quiet:
+                self.toast("Left the room")
             self._build_right()
+
+    # --- PC / CLOUD physics switch ----------------------------------------------
+    def _cloud_label(self):
+        if self.net and self.net.cloud:
+            return "CLOUD"
+        if self.solo_cloud:
+            return "CLOUD..."
+        return "PC"
+
+    def _cloud_color(self):
+        return (150, 90, 255) if (self.net and self.net.cloud) or self.solo_cloud else None
+
+    def toggle_cloud(self):
+        net = self.net
+        if net and (net.cloud or self.solo_cloud):
+            if self.solo_cloud:
+                self.leave_room(quiet=True)   # balls carry on from where the cloud left them
+            else:
+                net.stop_cloud()
+            self.toast("Physics: your PC")
+        elif net:
+            net.start_cloud()
+        else:
+            self.solo_cloud = True
+            self._solo_was_cloud = False
+            self.host_room(cloud=True)
+            if self.net:
+                self.toast("Physics: moving to the cloud...")
+            else:
+                self.solo_cloud = False
 
     def share_level(self):
         api = self.app.api()
@@ -2068,11 +2135,17 @@ class SandboxScene:
         w.update(frames)
         if self.net:
             self.net.tick(dt)
-            if self.net.ended:
+            if self.solo_cloud:
+                if self.net.cloud:
+                    self._solo_was_cloud = True
+                elif self.net.cloud_refused or (self._solo_was_cloud and self.net.connected):
+                    # the server said no, or ended the session: back to PC physics
+                    self.leave_room(quiet=True)
+            if self.net and self.net.ended:
                 self.net.close()
                 self.net = None
                 self._build_right()
-            elif self.right_tab == "Online" and self.ui.focus is None:
+            elif self.net and self.right_tab == "Online" and self.ui.focus is None:
                 self._online_refresh -= dt
                 if self._online_refresh <= 0:
                     self._online_refresh = 1.0
@@ -2345,6 +2418,15 @@ class SettingsOverlay:
         g, st = self._bind(attr)
         return Toggle(label, g, st, tip)
 
+    def _update_action(self):
+        up = self.app.updater
+        if up.state == "installed":
+            self.app.restart_for_update()
+        elif up.state == "available":
+            up.install()
+        else:
+            up.check(install=True)
+
     def _test(self):
         self.test_status, self.test_color = "Testing...", TEXT_DIM
 
@@ -2433,6 +2515,14 @@ class SettingsOverlay:
                 Header("Saving"),
                 self._toggle("Autosave every 2 minutes", "autosave",
                              "Worlds always save when you leave. This also saves them every 2 minutes."),
+                Header("Updates"),
+                Label(f"You have version {__version__}.", 13),
+                self._toggle("Auto-update", "auto_update",
+                             "When the game starts, download and install new versions from GitHub."),
+                Row(Button("Check for updates", lambda: self.app.updater.check(install=self.app.settings.auto_update)),
+                    Button(lambda: "Restart now" if self.app.updater.state == "installed" else "Install update",
+                           self._update_action)),
+                Label(lambda: self.app.updater.message, 13),
             ]
         elif self.tab == "Online":
             wd = [
