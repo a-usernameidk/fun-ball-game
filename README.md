@@ -29,21 +29,15 @@ balls, settings, coins, stats and the camera. Worlds save when you leave, and ev
 minutes while you play. You can also rename, duplicate or delete them, and each one gets
 a thumbnail. Use QUICK PLAY to try a level without making a world.
 
-**Online (v4.3):** you need a server for this, and you can get your own for free in about a minute:
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server)
-
-Click the button, log in to Cloudflare (it's free) and press **Deploy**. When it's done, copy
-the address it shows (like `https://fun-ball-game.yourname.workers.dev`), then paste it into
-the game under **Settings > Online**. Your friends paste the same address. The same button is
-in the game too. Then:
-- **Online levels:** share any world as a level, and browse, search, like and download other people's.
-- **Multiplayer:** host a room from a world's Online tab and give friends the 5-letter code.
-  You all build in the same world: blocks, settings, spawns and explosions sync live, and
-  you can see each other's cursors and chat (Enter or T).
-- **Cloud physics:** let the server simulate a room so your PC only has to draw it. The
-  server enforces limits (balls, blocks, a CPU-work budget, session time, cloud rooms at
-  once, and per-player spawn and message rates) so nobody can overload it with a lag machine.
+**Online (v4.3):**
+- **Multiplayer:** open a world, go to the **Online** tab and press **Host**. You get a
+  5-letter code. Friends go to **ONLINE** on the main menu, type the code and press **Join**.
+  You all build in the same world, see each other's cursors and can chat (Enter or T).
+- **Cloud physics:** choose "Host with cloud physics" to let the server run the simulation,
+  so your PC only has to draw it. The server limits balls, blocks, CPU work, session time
+  and spawn speed, so nobody can overload it with a lag machine.
+- **Online levels:** share a world as a level from its Online tab. Browse, play, like and
+  save other people's levels from **ONLINE** on the main menu.
 
 **Fast spawning:** in the Balls tab, set the spray rate (up to 1,000 balls a second), the
 spray brush size, and the burst size for Shift+click, B and the +N button. You can also
@@ -116,6 +110,18 @@ ball type, portal channel, black hole strength, and so on).
 
 Worlds (`saves/worlds/`), save slots, settings and achievements all go in the `saves/`
 folder next to the game. To back up a world, copy its `.json` file.
+
+## Setting up the online server (only the game's owner does this, once)
+
+Players never see any of this. The game connects to one server built into it.
+
+1. Merge this into `main`, then click
+   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server)
+   and press **Deploy**. It creates the server and its database for you.
+2. Copy the address it gives you, e.g. `https://fun-ball-game.yourname.workers.dev`.
+3. Put it in `fun_ball_game/net.py` on the `GAME_SERVER = ""` line, and commit.
+
+Server limits and details are in [server/README.md](server/README.md).
 
 ## Project layout
 

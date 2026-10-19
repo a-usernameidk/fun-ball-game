@@ -7,6 +7,7 @@ never freezes while waiting for the server.
 
 import json
 import math
+import os
 import queue
 import random
 import struct
@@ -25,8 +26,15 @@ except ImportError:  # multiplayer is optional
     websocket = None
 
 USER_AGENT = "FunBallGame/4.3"
-# One click: Cloudflare copies the server into your GitHub, makes the database and deploys it.
-DEPLOY_URL = "https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server"
+# The game's online server (your Cloudflare Worker). Everyone who plays this copy of the
+# game uses it automatically: players just host a room and share the code.
+# Put your Worker's address here, e.g. "https://fun-ball-game.yourname.workers.dev"
+GAME_SERVER = ""
+
+
+def server_url(settings):
+    """The server to use: a custom one from Settings (advanced), else the built-in one."""
+    return (settings.server_url or os.environ.get("FUN_BALL_SERVER", "") or GAME_SERVER).strip()
 _results = queue.Queue()
 
 
@@ -84,7 +92,7 @@ class Api:
 
     def request(self, method, path, cb, body=None, headers=None):
         if not self.configured:
-            _results.put((cb, False, "No server set. Add one in Settings > Online."))
+            _results.put((cb, False, "Online isn't switched on in this copy of the game yet."))
             return
 
         def run():

@@ -1,7 +1,6 @@
 """The application: main menu, sandbox scene, editor tools and UI panels."""
 
 import math
-import os
 import random
 import time
 from pathlib import Path
@@ -154,8 +153,6 @@ class App:
         self.settings = Settings()
         self.profile = _read_json(SAVE_DIR / "profile.json") or {}
         self.settings.load_dict(self.profile.get("prefs", {}))
-        if not self.settings.server_url:
-            self.settings.server_url = os.environ.get("FUN_BALL_SERVER", "")
         if not self.settings.player_name:
             self.settings.player_name = f"Player{random.randint(100, 999)}"
         self.overlay = None
@@ -201,7 +198,7 @@ class App:
             self.scene.resize()
 
     def api(self):
-        return N.Api(self.settings.server_url)
+        return N.Api(N.server_url(self.settings))
 
     def quit(self):
         net = getattr(self.scene, "net", None)
@@ -594,8 +591,7 @@ class MenuScene:
             return
         if not api.configured:
             self.online_levels = []
-            self.online_status = ("No server yet. Open SETTINGS > Online and click \"Get a free server\" "
-                                  "(or paste a friend's server address).")
+            self.online_status = "Online isn't switched on in this copy of the game yet."
             return
         self.online_status = "Loading levels..."
 
@@ -855,8 +851,6 @@ class MenuScene:
             r = self._panel_rect()
             panel(surf, r, (16, 16, 26))
             ui.text(surf, "ONLINE", (r.x + 18, r.y + 18), 22, ACCENT, True)
-            server = self.app.settings.server_url or "no server set"
-            ui.text(surf, server[:60], (r.x + 120, r.y + 25), 13, TEXT_DIM)
             if self.online_status:
                 for i, line in enumerate(wrap(ui.font(14), self.online_status, self.online_list.rect.w - 20)[:3]):
                     ui.text(surf, line, (self.online_list.rect.x + 10, self.online_list.rect.y + 10 + i * 20), 14, WARN)
@@ -1559,8 +1553,8 @@ class SandboxScene:
             self.net.send_clear()
 
     def _can_go_online(self):
-        if not N.Api(self.s.server_url).configured:
-            self.toast("Set your server in Settings > Online first", WARN)
+        if not N.Api(N.server_url(self.s)).configured:
+            self.toast("Online isn't switched on in this copy of the game yet", WARN)
             return False
         if not N.multiplayer_available():
             self.toast("Multiplayer needs: pip install websocket-client", WARN)
@@ -1571,7 +1565,7 @@ class SandboxScene:
         if self.net or not self._can_go_online():
             return
         code = N.new_room_code()
-        self.net = N.Session(self, self.s.server_url, code, self.s.player_name, creator=True, cloud=cloud)
+        self.net = N.Session(self, N.server_url(self.s), code, self.s.player_name, creator=True, cloud=cloud)
         self.toast(f"Hosting room {code}. Tell your friends the code!")
         self._build_right()
 
@@ -1582,7 +1576,7 @@ class SandboxScene:
         if not 4 <= len(code) <= 8:
             self.toast("Room codes are 5 letters/numbers", WARN)
             return
-        self.net = N.Session(self, self.s.server_url, code, self.s.player_name)
+        self.net = N.Session(self, N.server_url(self.s), code, self.s.player_name)
         self.toast(f"Joining room {code}...")
         self._build_right()
 
@@ -1613,7 +1607,6 @@ class SandboxScene:
         self._build_right()
 
     def _online_widgets(self):
-        s = self.s
         wd = []
         net = self.net
         if net is None:
@@ -1654,7 +1647,6 @@ class SandboxScene:
             Button("Upload level", self.share_level, color=ACCENT2, height=32,
                    tip="Uploads the blocks and settings (not the balls). Browse levels from the main menu: ONLINE."),
             Label(lambda: self.share_status, 13),
-            Label(lambda: f"Server: {s.server_url or 'not set (Settings > Online)'}", 12),
         ]
         return wd
 
@@ -2353,14 +2345,6 @@ class SettingsOverlay:
         g, st = self._bind(attr)
         return Toggle(label, g, st, tip)
 
-    def _deploy(self):
-        import webbrowser
-        try:
-            webbrowser.open(N.DEPLOY_URL)
-            self.test_status, self.test_color = "Opened Cloudflare in your browser.", TEXT_DIM
-        except Exception:
-            self.test_status, self.test_color = "Open this in your browser: " + N.DEPLOY_URL, WARN
-
     def _test(self):
         self.test_status, self.test_color = "Testing...", TEXT_DIM
 
@@ -2452,20 +2436,17 @@ class SettingsOverlay:
             ]
         elif self.tab == "Online":
             wd = [
-                Header("Server"),
-                Label("Online levels, multiplayer and cloud physics need a server. You can get your own "
-                      "free one on Cloudflare in about a minute: click below, log in, press Deploy, then "
-                      "paste the address it gives you here. Friends just paste the same address.", 13),
-                Button("Get a free server (opens Cloudflare)", self._deploy, color=(246, 130, 31), height=34,
-                       text_color=(20, 20, 30)),
-                TextInput(lambda: s.server_url, lambda v: setattr(s, "server_url", v.strip()),
-                          "https://fun-ball-game.yourname.workers.dev", 120,
-                          tip="Click, paste or type the address, press Enter"),
-                Row(Button("Test connection", self._test), Button("Clear", lambda: setattr(s, "server_url", ""))),
-                Label(lambda: self.test_status, 13, lambda: self.test_color),
                 Header("You"),
                 TextInput(lambda: s.player_name, lambda v: setattr(s, "player_name", v[:20]), "Your name", 20,
                           tip="Shown to other players and on levels you share"),
+                Label("To play with friends: open a world, go to the Online tab and press Host. Give your "
+                      "friends the 5-letter code, and they type it in to join.", 13),
+                Row(Button("Test connection", self._test), Spacer(0)),
+                Label(lambda: self.test_status, 13, lambda: self.test_color),
+                Header("Advanced", TEXT_DIM),
+                Label("Leave this empty to use the game's server. Only fill it in to use a different one.", 12),
+                TextInput(lambda: s.server_url, lambda v: setattr(s, "server_url", v.strip()),
+                          "Custom server address (optional)", 120),
             ]
             if not N.multiplayer_available():
                 wd.append(Label("Multiplayer needs one extra package: pip install websocket-client "

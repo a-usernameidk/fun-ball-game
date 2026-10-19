@@ -6,21 +6,18 @@ This one Worker powers everything online in the game:
 - **Multiplayer rooms**: build together in one world with a 5-letter room code.
 - **Cloud physics**: the server runs a room's simulation so players' computers only draw it.
 
-## Set it up: one click
+## Set it up (once, by the game's owner)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server)
 
-1. Click the button. You can also use **Settings > Online > Get a free server** in the game.
-2. Log in to Cloudflare or make a free account, and connect GitHub when it asks.
-3. Press **Deploy**. Cloudflare copies this folder into your GitHub, creates the database
-   and puts the server online. The server creates its own tables on the first visit, so
-   there's nothing else to set up.
-4. Copy the address it gives you, e.g. `https://fun-ball-game.yourname.workers.dev`, and paste
-   it into the game under **Settings > Online**, then click **Test connection**.
+1. Click the button, log in to Cloudflare and press **Deploy**. Cloudflare copies this folder
+   into your GitHub, creates the database and puts the server online. The server creates its
+   own tables on first use, so there's nothing else to set up.
+2. Copy the address it gives you, e.g. `https://fun-ball-game.yourname.workers.dev`.
+3. Put that address in `fun_ball_game/net.py` on the line `GAME_SERVER = ""`. Every copy of
+   the game then uses your server automatically. Players just host and share room codes.
 
-Share that address with your friends so you all use the same server.
-
-**Updating later:** the deploy connects your copy to Cloudflare, so every change pushed to it
+**Updating later:** your copy is connected to Cloudflare, so pushing a change to it
 redeploys by itself. To change a limit, edit `wrangler.toml` on GitHub's website and commit.
 
 ## Limits (anti-abuse)
