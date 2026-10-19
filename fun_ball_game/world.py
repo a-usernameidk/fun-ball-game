@@ -33,6 +33,8 @@ class World:
                           blocks_placed=0)
         self._bgrid = {}
         self._trail_acc = 0.0
+        self.remote = False      # True: the cloud runs the physics, we only draw
+        self.spawn_lock = False  # True: only the room host may create balls
         self.rebuild_rings()
 
     # ------------------------------------------------------------------
@@ -63,6 +65,8 @@ class World:
     # balls
     # ------------------------------------------------------------------
     def spawn_ball(self, x, y, vx=None, vy=None, kind=None, color=None, radius=None):
+        if self.remote or self.spawn_lock:
+            return None
         s = self.s
         if len(self.balls) >= s.ball_limit():
             if s.limit_action == "Stop Spawning":
@@ -188,6 +192,9 @@ class World:
         if self.step_once:
             frames = 1.0
             self.step_once = False
+        if self.remote:
+            self._remote_update(frames)
+            return
         total = frames * self.s.time_speed
         steps = max(self.s.substeps, int(math.ceil(total / 1.2)))
         steps = min(steps, 12)
@@ -199,6 +206,38 @@ class World:
         self._per_frame(total)
         self.fx.update(total)
         self.time += total
+
+    def _remote_update(self, frames):
+        """Cloud mode: the server simulates; we just glide balls along between snapshots."""
+        total = frames * self.s.time_speed
+        for r in self.rings:
+            r.update(total)
+        for blk in self.blocks:
+            if blk.alive and blk.key in ("spinner", "saw", "mover", "flipper", "door"):
+                blk.update(total, self)
+            elif blk.alive:
+                blk.t += total
+        for b in self.balls:
+            if b.frozen <= 0:
+                b.x += b.vx * total
+                b.y += b.vy * total
+        self._trail_acc += total
+        if self._trail_acc >= 1.0:
+            self._trail_acc %= 1.0
+            if self.s.trails:
+                for b in self.balls:
+                    b.history.append((b.x, b.y))
+        self.fx.update(total)
+        self.time += total
+        self.audio.tick(frames)
+
+    def boom_fx(self, x, y, power):
+        """Just the look and sound of an explosion (the cloud already did the physics)."""
+        self.fx.burst(x, y, (255, 160, 40), 50, 7, 4, 40, 0.02, 0.93)
+        self.fx.burst(x, y, (255, 240, 180), 20, 4, 3, 22, 0, 0.9)
+        if self.s.screen_shake:
+            self.shake = min(30.0, self.shake + power * 0.9)
+        self.sound("boom", 10)
 
     def _build_block_grid(self):
         grid = {}
@@ -332,6 +371,8 @@ class World:
         if d < 1e-6:
             return
         L = b.layer
+        if L > n_rings:  # rings were removed (e.g. a multiplayer settings change)
+            L = b.layer = self.layer_for(d)
         if L < n_rings:
             ring = self.rings[L]
             R, half = ring.radius, ring.thickness / 2
@@ -441,7 +482,7 @@ class World:
         trails = s.trails
         n_rings = len(self.rings)
         lifetime = s.escaped_lifetime * 60
-        magnets, icers, seekers = [], [], []
+        magnets, icers, seekers, eaters = [], [], [], []
         self._trail_acc += frames
         sample = self._trail_acc >= 1.0
         if sample:
@@ -485,6 +526,39 @@ class World:
                 continue
             if k == "ice":
                 icers.append(b)
+                continue
+            if k == "rocket":
+                sp = math.hypot(b.vx, b.vy)
+                if sp > 0.1:
+                    b.vx += b.vx / sp * 0.15 * frames
+                    b.vy += b.vy / sp * 0.15 * frames
+                if random.random() < 0.5:
+                    self.fx.trail(b.x - b.vx, b.y - b.vy, (255, 200, 80), b.r * 0.4, 14, 0)
+                continue
+            if k == "balloon":
+                gx, gy = self.gravity_vec()
+                b.vx -= gx * 1.6 * frames
+                b.vy -= gy * 1.6 * frames
+                if b.bounces >= 3:
+                    self.kill_ball(b, "pop")
+                continue
+            if k == "phantom":
+                b.ghost = int(b.age // 60) % 2 == 1
+                continue
+            if k == "hyper":
+                if int(b.age // 30) != int((b.age - frames) // 30):
+                    sp = max(4.0, math.hypot(b.vx, b.vy))
+                    a = random.uniform(0, math.tau)
+                    b.vx, b.vy = math.cos(a) * sp, math.sin(a) * sp
+                continue
+            if k == "glass":
+                if hit > 0 and b.age > 10:
+                    self.kill_ball(b, "none")
+                    self.fx.burst(b.x, b.y, (210, 245, 255), 14, 3.5, 2, 30, 0.15)
+                    self.sound("glass", 3)
+                continue
+            if k == "eater":
+                eaters.append(b)
                 continue
             if k == "seeker":
                 seekers.append(b)
@@ -533,6 +607,18 @@ class World:
                 if dx * dx + dy * dy < rr * rr:
                     b.frozen = 120
                     self.fx.burst(b.x, b.y, (200, 240, 255), 6, 1.5, 2, 20, 0)
+        for eat in eaters[:20]:
+            if not eat.alive:
+                continue
+            for b in self.balls:
+                if b is eat or not b.alive or b.kind == "eater" or b.r >= eat.r:
+                    continue
+                dx, dy = b.x - eat.x, b.y - eat.y
+                rr = b.r + eat.r
+                if dx * dx + dy * dy < rr * rr:
+                    b.alive = False
+                    eat.set_radius(min(45.0, math.sqrt(eat.r * eat.r + b.r * b.r * 0.5)))
+                    self.fx.burst(b.x, b.y, b.color, 4, 1.5, 2, 14, 0)
         if seekers:
             targets = [blk for blk in self.blocks if blk.alive and blk.key in ("coin", "hoop", "brick", "crate")
                        and getattr(blk, "cool", 0) <= 0]

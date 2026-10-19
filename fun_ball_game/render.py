@@ -152,6 +152,11 @@ class Renderer:
                 if glow > 0.1:
                     pygame.draw.circle(surf, mix(_BG, (200, 255, 120), glow * 0.8),
                                        (vp.x + x, vp.y + y), 1 + glow * 2)
+            elif kind == "snow":
+                p[1] = (v + 0.4 + a * 0.8) % H
+                x = (u + math.sin(t * 0.7 + b * 12) * 14) % W
+                pygame.draw.circle(surf, mix(_BG, (235, 245, 255), 0.35 + 0.45 * a),
+                                   (vp.x + x, vp.y + p[1]), 1 + a * 1.8)
             elif kind == "rain":
                 p[1] = (v + 6 + a * 8) % H
                 p[0] = (u + 1.5) % W
@@ -212,6 +217,12 @@ class Renderer:
             if glow and ri >= 2:
                 g = glow_surface(b.color, ri * 2 + 2)
                 surf.blit(g, (sx - ri * 2 - 2, sy - ri * 2 - 2), special_flags=pygame.BLEND_RGB_ADD)
+            if b.kind == "eater" and ri >= 3:
+                circle(surf, (20, 20, 24), (sx, sy), r)
+                circle(surf, (255, 60, 60), (sx, sy), r, max(1, int(r * 0.15)))
+                circle(surf, (255, 255, 255), (sx - r * 0.3, sy - r * 0.25), max(1, r * 0.18))
+                circle(surf, (255, 255, 255), (sx + r * 0.3, sy - r * 0.25), max(1, r * 0.18))
+                continue
             if b.ghost:
                 circle(surf, _dim(b.color, 0.35), (sx, sy), r)
                 circle(surf, b.color, (sx, sy), r, 1)

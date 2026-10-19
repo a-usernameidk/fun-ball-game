@@ -13,6 +13,7 @@ from .audio import Audio
 from .balls import BALL_ORDER, BALL_TYPES
 from .presets import PRESETS
 from .render import Renderer
+from . import net as N
 from . import worlds as W
 from .settings import (ACCENT, ACCENT2, BG, BORDER, COLOR_SCHEMES, DANGER, FPS_OPTIONS,
                        LIMIT_ACTIONS, PANEL, PANEL_LIGHT, TEXT, TEXT_DIM, THEME_ORDER, THEMES, WARN,
@@ -126,7 +127,8 @@ HELP_LINES = [
     ("Delete  /  Ctrl+D", "Delete  /  duplicate the selected block"),
     ("Ctrl+Z", "Undo"),
     ("Ctrl+S  /  Ctrl+L", "Save the world  /  quick load (slot 1)"),
-    ("B  /  C", "Spawn 10 balls in the centre  /  clear all balls"),
+    ("B  /  C", "Spawn a burst of balls in the centre  /  clear all balls"),
+    ("Shift+click  /  R", "Burst of balls at the mouse  /  ball rain on/off"),
     ("1 - 9", "Pick a tile in the current toolbox tab"),
     ("+  /  -", "Simulation speed"),
     ("G", "Snap to grid"),
@@ -151,6 +153,8 @@ class App:
         self.settings = Settings()
         self.profile = _read_json(SAVE_DIR / "profile.json") or {}
         self.settings.load_dict(self.profile.get("prefs", {}))
+        if not self.settings.player_name:
+            self.settings.player_name = f"Player{random.randint(100, 999)}"
         self.overlay = None
         self.audio = Audio(self.settings)
         self.ui = UI()
@@ -193,7 +197,13 @@ class App:
         if isinstance(self.scene, SandboxScene):
             self.scene.resize()
 
+    def api(self):
+        return N.Api(N.server_url(self.settings))
+
     def quit(self):
+        net = getattr(self.scene, "net", None)
+        if net:
+            net.close()
         if isinstance(self.scene, SandboxScene):
             self.scene.autosave()
         self.save_profile()
@@ -234,6 +244,7 @@ class App:
             self.scene.event(e)
         self.ui.mouse = pygame.mouse.get_pos()
         self.ui.tip = None
+        N.poll()
         self.scene.update(frames, dt)
         self.scene.draw(self.screen)
         if self.overlay:
@@ -288,6 +299,8 @@ def theme_swatch(surf, rect, name, t=0.0):
             surf.fill((255, 150, 50), (x, y, 2, 2))
         elif fx == "fireflies":
             pygame.draw.circle(surf, (210, 255, 130), (x, y), 2)
+        elif fx == "snow":
+            pygame.draw.circle(surf, (235, 245, 255), (x, y), 1 + i % 2)
         elif fx == "rain":
             pygame.draw.line(surf, (255, 60, 200) if i % 2 else (0, 220, 255), (x, y), (x - 2, y - 8))
     pal = COLOR_SCHEMES.get(th["physics"].get("color_scheme", "Neon Mix")) or COLOR_SCHEMES["Neon Mix"]
@@ -348,6 +361,13 @@ class MenuScene:
         self.new_theme = "Midnight"
         self.new_level = "Classic"
         self.world_list = ScrollList(pad=4, gap=8)
+        self.online_list = ScrollList(pad=4, gap=8)
+        self.online_tab = "Newest"
+        self.online_levels = []
+        self.online_sel = None
+        self.online_status = ""
+        self.online_query = ""
+        self.join_code = ""
         self.refresh_worlds()
         self.resize()
 
@@ -456,6 +476,8 @@ class MenuScene:
             items += [
                 Button("QUICK PLAY", lambda: self._mode("levels"), color=ACCENT2, height=42, size=16,
                        tip="Try a level without making a world (not saved)"),
+                Button("ONLINE", lambda: self._mode("online"), color=(150, 90, 255), height=42, size=16,
+                       tip="Play levels other people shared, or join a friend's room"),
                 Button("SETTINGS", self.app.open_settings, height=42, size=16),
                 Button("HOW TO PLAY", lambda: self._mode("help"), height=42, size=16),
                 Button("QUIT", self.app.quit, height=38, color=(70, 30, 45), text_color=TEXT),
@@ -524,12 +546,14 @@ class MenuScene:
             self.widgets += [create, cancel]
             if self.ui.focus is None:
                 name.focus(self.ui)
+        elif self.mode == "online":
+            self._build_online()
         elif self.mode == "levels":
-            cols = 3
-            cw, gap = min(320, (W_ - 120) // cols), 14
+            cols = 4 if W_ >= 1200 else 3
+            cw, gap = min(300, (W_ - 120) // cols), 14
             total_w = cols * cw + (cols - 1) * gap
             x0 = W_ // 2 - total_w // 2
-            y0 = int(H * 0.24)
+            y0 = int(H * 0.2)
             for i, (name, desc, fn) in enumerate(PRESETS):
                 card = PresetCard(name, desc, lambda fn=fn: self._quick_play(fn))
                 card.layout(x0 + (i % cols) * (cw + gap), y0 + (i // cols) * (74 + gap), cw)
@@ -549,6 +573,176 @@ class MenuScene:
         self.mode = m
         if m in ("worlds", "main"):
             self.refresh_worlds()
+        if m == "online":
+            self._fetch_levels()
+        self.build()
+
+    # --- online levels ----------------------------------------------------
+    def _fetch_levels(self):
+        api = self.app.api()
+        self.online_sel = None
+        if self.online_tab == "My uploads":
+            ups = self.app.profile.get("uploads", {})
+            self.online_levels = [{"id": k, "name": v.get("name", k), "author": self.app.settings.player_name,
+                                   "theme": "", "likes": "?", "plays": "?", "blocks": "?", "description": "",
+                                   "mine": True} for k, v in ups.items()]
+            self.online_status = "" if ups else "You haven't shared any levels yet (Online tab in a world)."
+            self.build()
+            return
+        if not api.configured:
+            self.online_levels = []
+            self.online_status = "Online isn't switched on in this copy of the game yet."
+            return
+        self.online_status = "Loading levels..."
+
+        def done(ok, data):
+            if self.mode != "online":
+                return
+            if ok:
+                ups = self.app.profile.get("uploads", {})
+                self.online_levels = [dict(lv, mine=lv["id"] in ups) for lv in data.get("levels", [])]
+                self.online_status = "" if self.online_levels else "No levels here yet. Share one from a world!"
+            else:
+                self.online_levels = []
+                self.online_status = str(data)
+            self.build()
+        api.list_levels(done, "top" if self.online_tab == "Top" else "new", self.online_query)
+
+    def _online_meta(self):
+        return next((lv for lv in self.online_levels if lv["id"] == self.online_sel), None)
+
+    def _download(self, then):
+        lv = self._online_meta()
+        if not lv:
+            return
+        self.online_status = f"Downloading {lv['name']}..."
+
+        def done(ok, data):
+            if not ok:
+                self.online_status = str(data)
+                return
+            then(data)
+        self.app.api().get_level(lv["id"], done)
+
+    def _play_online(self):
+        def go(data):
+            scene = SandboxScene(self.app)
+            scene.world.load_dict(data["data"])
+            if data.get("theme") in THEMES:
+                scene.s.theme = data["theme"]
+            if scene.world.rings:
+                scene.world.spawn_center(1)
+            scene.fit_camera()
+            scene.resize()
+            scene.toast(f"Playing {data['name']} by {data['author']} (not saved)")
+            self.app.set_scene(scene)
+        self._download(go)
+
+    def _save_online(self):
+        def go(data):
+            scene = SandboxScene(self.app)
+            scene.world.load_dict(data["data"])
+            theme_name = data.get("theme") if data.get("theme") in THEMES else scene.s.theme
+            scene.s.theme = theme_name
+            scene.world_id = W.new_id(data["name"])
+            scene.meta = W.make_meta(data["name"], theme_name)
+            if scene.world.rings:
+                scene.world.spawn_center(1)
+            scene.fit_camera()
+            scene.resize()
+            scene.save_world(thumb=False)
+            scene.toast(f"Saved {data['name']} as a world")
+            self.app.set_scene(scene)
+        self._download(go)
+
+    def _like_online(self):
+        lv = self._online_meta()
+        if not lv:
+            return
+
+        def done(ok, data):
+            if ok:
+                lv["likes"] = data.get("likes", lv["likes"])
+                self.online_status = "You already liked this one" if data.get("already") else "Liked!"
+            else:
+                self.online_status = str(data)
+        self.app.api().like(lv["id"], done)
+
+    def _delete_online(self):
+        lv = self._online_meta()
+        ups = self.app.profile.get("uploads", {})
+        if not lv or lv["id"] not in ups:
+            return
+        if self.confirm_delete <= 0:
+            self.confirm_delete = 3.0
+            return
+        self.confirm_delete = 0.0
+
+        def done(ok, data):
+            if ok or data == "Level not found":
+                ups.pop(lv["id"], None)
+                self.app.save_profile()
+                self.online_status = "Deleted"
+                self._fetch_levels()
+            else:
+                self.online_status = str(data)
+        self.app.api().delete(lv["id"], ups[lv["id"]]["token"], done)
+
+    def _join_from_menu(self):
+        scene = SandboxScene(self.app)
+        PRESETS[-1][2](scene.world)
+        scene.fit_camera()
+        self.app.set_scene(scene)
+        scene.join_room(self.join_code)
+
+    def _build_online(self):
+        r = self._panel_rect()
+        lw = int(r.w * 0.56)
+        x = r.x + 16
+        tabs = Tabs(["Newest", "Top", "My uploads"], lambda: self.online_tab,
+                    lambda t: (setattr(self, "online_tab", t), self._fetch_levels()), 13)
+        tabs.layout(x, r.y + 56, lw)
+        search = TextInput(lambda: self.online_query, lambda v: setattr(self, "online_query", v), "Search levels", 40,
+                           live=True)
+        search.layout(x, r.y + 98, lw - 110)
+        go = Button("SEARCH", self._fetch_levels, height=38)
+        go.layout(x + lw - 100, r.y + 98, 100)
+        cards = [OnlineCard(lv, lambda lid=lv["id"]: self._select_online(lid), lambda lid=lv["id"]: self.online_sel == lid)
+                 for lv in self.online_levels]
+        self.online_list.set(cards, keep_scroll=True)
+        self.online_list.layout(pygame.Rect(x, r.y + 146, lw, r.h - 216))
+        back = Button("BACK", lambda: self._mode("main"), height=44)
+        back.layout(x, r.bottom - 60, 160)
+        settings = Button("SETTINGS", self.app.open_settings, height=44, tip="Set your server address here")
+        settings.layout(x + 172, r.bottom - 60, 160)
+        self.widgets += [tabs, search, go, self.online_list, back, settings]
+        dx = r.x + lw + 36
+        dw = r.right - dx - 18
+        self.detail_x, self.detail_w = dx, dw
+        lv = self._online_meta()
+        if lv:
+            play = Button("PLAY", self._play_online, color=ACCENT, height=46, size=17)
+            play.layout(dx, r.y + 250, dw)
+            save = Button("SAVE AS WORLD", self._save_online, height=38)
+            save.layout(dx, r.y + 304, dw // 2 - 6)
+            like = Button("LIKE", self._like_online, color=ACCENT2, height=38)
+            like.layout(dx + dw // 2 + 6, r.y + 304, dw - dw // 2 - 6)
+            self.widgets += [play, save, like]
+            if lv.get("mine"):
+                dele = Button(lambda: "CLICK AGAIN TO DELETE" if self.confirm_delete > 0 else "DELETE MY LEVEL",
+                              self._delete_online, color=(90, 30, 45), text_color=TEXT, height=34, size=12)
+                dele.layout(dx, r.y + 352, dw)
+                self.widgets.append(dele)
+        code = TextInput(lambda: self.join_code, lambda v: setattr(self, "join_code", v.upper()[:8]), "ROOM CODE", 8,
+                         live=True)
+        code.layout(dx, r.bottom - 110, dw - 112)
+        join = Button("JOIN", self._join_from_menu, color=ACCENT, height=38)
+        join.layout(dx + dw - 100, r.bottom - 110, 100)
+        self.widgets += [code, join]
+
+    def _select_online(self, lid):
+        self.online_sel = lid
+        self.confirm_delete = 0.0
         self.build()
 
     def event(self, e):
@@ -561,6 +755,9 @@ class MenuScene:
                 self.app.quit()
             return
         if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
+            if self.mode == "online" and self.join_code:
+                self._join_from_menu()
+                return
             if self.mode == "create":
                 self._create()
                 return
@@ -586,6 +783,8 @@ class MenuScene:
             self.demo.spawn_center(3)
         if self.mode == "worlds":
             self.world_list.layout(self.world_list.rect)
+        if self.mode == "online":
+            self.online_list.layout(self.online_list.rect)
 
     def draw(self, surf):
         W_, H = surf.get_size()
@@ -595,7 +794,7 @@ class MenuScene:
         shade = pygame.Surface((W_, H), pygame.SRCALPHA)
         shade.fill((8, 8, 14, 150 if self.mode == "main" else 215))
         surf.blit(shade, (0, 0))
-        small = self.mode in ("worlds", "create")
+        small = self.mode in ("worlds", "create", "online")
         title_y = int(H * (0.25 if self.mode == "main" else (0.08 if small else 0.1)))
         size = 64 if not small else 44
         bob = math.sin(self.t * 0.04) * 4
@@ -603,7 +802,7 @@ class MenuScene:
             ui.text(surf, "FUN BALL GAME", (W_ // 2 + 3 - i * 2, title_y + bob + 3 - i * 2), size, col, True, "center")
         ui.text(surf, "FUN BALL GAME", (W_ // 2, title_y + bob), size, ACCENT, True, "center")
         if self.mode == "main":
-            ui.text(surf, "v4.2  -  Pygame Sandbox Edition", (W_ // 2, title_y + 52), 18, ACCENT2, True, "center")
+            ui.text(surf, "v4.3  -  Pygame Sandbox Edition", (W_ // 2, title_y + 52), 18, ACCENT2, True, "center")
             n_blocks = sum(len(v) for v in B.CATEGORIES.values())
             ui.text(surf, f"{n_blocks} blocks & items  -  {len(BALL_TYPES)} ball types  -  "
                     f"{len(THEMES)} world themes  -  {len(PRESETS)} levels",
@@ -648,6 +847,27 @@ class MenuScene:
             ui.text(surf, "Theme", (r.x + 24, r.y + 138), 13, TEXT_DIM, True)
             desc = next(p[1] for p in PRESETS if p[0] == self.new_level)
             ui.text(surf, desc, (r.x + 24, self.level_desc_y), 13, TEXT_DIM)
+        elif self.mode == "online":
+            r = self._panel_rect()
+            panel(surf, r, (16, 16, 26))
+            ui.text(surf, "ONLINE", (r.x + 18, r.y + 18), 22, ACCENT, True)
+            if self.online_status:
+                for i, line in enumerate(wrap(ui.font(14), self.online_status, self.online_list.rect.w - 20)[:3]):
+                    ui.text(surf, line, (self.online_list.rect.x + 10, self.online_list.rect.y + 10 + i * 20), 14, WARN)
+            dx, dw = self.detail_x, self.detail_w
+            lv = self._online_meta()
+            if lv:
+                ui.text(surf, lv["name"], (dx, r.y + 60), 22, TEXT, True)
+                ui.text(surf, f"by {lv['author']}", (dx, r.y + 92), 14, ACCENT2, True)
+                ui.text(surf, f"{lv.get('theme') or '?'} theme   {lv['blocks']} blocks   {lv['likes']} likes   "
+                        f"{lv['plays']} plays", (dx, r.y + 116), 13, TEXT_DIM)
+                for i, line in enumerate(wrap(ui.font(14), lv.get("description") or "No description.", dw)[:4]):
+                    ui.text(surf, line, (dx, r.y + 146 + i * 20), 14, TEXT)
+            else:
+                ui.text(surf, "Pick a level on the left.", (dx, r.y + 60), 15, TEXT_DIM)
+            ui.text(surf, "MULTIPLAYER", (dx, r.bottom - 176), 14, ACCENT, True)
+            ui.text(surf, "Type a friend's room code to join them. To host, open a world", (dx, r.bottom - 154), 13, TEXT_DIM)
+            ui.text(surf, "and use the Online tab on the right.", (dx, r.bottom - 136), 13, TEXT_DIM)
         elif self.mode == "levels":
             ui.text(surf, "Quick play  -  pick a level (not saved as a world)", (W_ // 2, title_y + 60),
                     20, TEXT, True, "center")
@@ -674,6 +894,28 @@ class MenuScene:
         for w in self.widgets:
             w.hover(ui)
             w.draw(surf, ui)
+
+
+class OnlineCard(Button):
+    def __init__(self, lv, on_click, selected):
+        super().__init__(lv["name"], on_click, height=64)
+        self.lv, self.selected = lv, selected
+
+    def draw(self, surf, ui):
+        hov = self.rect.collidepoint(ui.mouse)
+        sel = self.selected()
+        pygame.draw.rect(surf, (38, 38, 62) if sel else ((30, 30, 50) if hov else PANEL_LIGHT), self.rect,
+                         border_radius=10)
+        pygame.draw.rect(surf, ACCENT if sel else (mix(BORDER, ACCENT, 0.4) if hov else BORDER), self.rect,
+                         2 if sel else 1, border_radius=10)
+        th = self.lv.get("theme")
+        sw = pygame.Rect(self.rect.x + 8, self.rect.y + 8, 48, 48)
+        theme_swatch(surf, sw, th if th in THEMES else "Midnight")
+        x = sw.right + 12
+        ui.text(surf, self.lv["name"], (x, self.rect.y + 10), 16, ACCENT if sel else TEXT, True)
+        mine = "  (yours)" if self.lv.get("mine") else ""
+        ui.text(surf, f"by {self.lv['author']}{mine}   {self.lv['likes']} likes   {self.lv['plays']} plays",
+                (x, self.rect.y + 36), 13, TEXT_DIM)
 
 
 class ThemeCard(Button):
@@ -726,6 +968,15 @@ class SandboxScene:
         self.grabbed = []
         self.erase_batch = None
         self.spray_t = 0.0
+        self.rain = False
+        self.rain_t = 0.0
+        self.net = None   # online room (multiplayer / cloud physics), see net.py
+        self.join_code = ""
+        self.share_name = ""
+        self.share_desc = ""
+        self.share_status = ""
+        self._online_refresh = 1.0
+        self.chat_input = TextInput(lambda: "", lambda v: self.net and self.net.say(v), "Say something...", 120)
         self.fps = 60.0
         self._icon_cache = {}
         self._inspected = None
@@ -751,8 +1002,8 @@ class SandboxScene:
         self.left_tabs = Tabs(["Tools", "Blocks", "Fields", "Items", "Balls"],
                               lambda: self.left_tab, self._set_left_tab, 12)
         self.left_tabs.layout(self.left_rect.x + 8, self.left_rect.y + 8, LEFT_W - 16)
-        self.right_tabs = Tabs(["World", "Physics", "Visual", "Inspect"],
-                               lambda: self.right_tab, self._set_right_tab, 13)
+        self.right_tabs = Tabs(["World", "Physics", "Visual", "Inspect", "Online"],
+                               lambda: self.right_tab, self._set_right_tab, 12)
         self.right_tabs.layout(self.right_rect.x + 8, self.right_rect.y + 8, RIGHT_W - 16)
         self._build_top()
         self._build_left()
@@ -795,8 +1046,9 @@ class SandboxScene:
             (Button(lambda: f"{self.s.time_speed:g}x", lambda: setattr(self.s, "time_speed", 1.0),
                     tip="Simulation speed. Click to reset to 1x."), 54),
             (Button("+", lambda: sp(1), tip="Faster (+)"), 30),
-            (Button("+10", lambda: w.spawn_center(10), tip="Spawn 10 balls in the centre (B)"), 48),
-            (Button("CLEAR BALLS", w.clear_balls, tip="Delete every ball (C)"), 108),
+            (Button(lambda: f"+{self.s.burst_size}", lambda: self.spawn_center(self.s.burst_size),
+                    tip="Spawn a burst of balls in the centre (B). Set the size in the Balls tab."), 56),
+            (Button("CLEAR BALLS", self.clear_balls, tip="Delete every ball (C)"), 108),
             (Button("CLEAR MAP", self.clear_blocks, color=(90, 30, 45), text_color=TEXT,
                     tip="Delete every block (can be undone)"), 96),
             (Button("UNDO", self.undo, tip="Undo (Ctrl+Z)"), 62),
@@ -877,10 +1129,23 @@ class SandboxScene:
                                   str(i + 1) if i < 9 else None))
         widgets = [Grid(tiles, 3, 80)]
         if tab == "Balls":
-            widgets += [Spacer(4), Toggle("Escapes spawn this type",
-                                          lambda: self.s.spawn_type == self.ball_kind,
-                                          lambda v: setattr(self.s, "spawn_type", self.ball_kind if v else "normal"),
-                                          tip="When on, balls spawned by escapes are this type too.")]
+            s = self.s
+            widgets += [
+                Spacer(4),
+                Toggle("Escapes spawn this type", lambda: s.spawn_type == self.ball_kind,
+                       lambda v: setattr(s, "spawn_type", self.ball_kind if v else "normal"),
+                       tip="When on, balls spawned by escapes are this type too."),
+                Header("Fast spawning"),
+                self._slider("Spray rate /sec", "spray_rate", 1, 1000, 1,
+                             "How many balls per second you spray while holding the mouse."),
+                self._slider("Spray brush size", "spray_size", 0, 400, 5,
+                             "Spread the spray over a circle this big."),
+                self._slider("Burst (Shift+click, B)", "burst_size", 1, 1000, 1,
+                             "Shift+click spawns this many at once. B and the +N button spawn them in the centre."),
+                Toggle("Ball rain (R)", lambda: self.rain, lambda v: setattr(self, "rain", v),
+                       tip="Balls fall from the top of the screen nonstop."),
+                self._slider("Rain rate /sec", "rain_rate", 1, 500, 1),
+            ]
         self.left_list.set(widgets)
         r = self.left_rect
         self.left_list.layout(pygame.Rect(r.x, r.y + 46, r.w, r.h - 46 - 130))
@@ -945,9 +1210,9 @@ class SandboxScene:
                              "Escaped balls disappear after this many seconds. 0 = never."),
                 self._slider("Ball size", "ball_radius", 2, 30, 0.5, "Radius of newly spawned balls."),
                 self._slider("Spawn speed", "spawn_speed", 0, 20, 0.5),
-                Row(Button("+1", lambda: self.world.spawn_center(1)),
-                    Button("+10", lambda: self.world.spawn_center(10)),
-                    Button("+100", lambda: self.world.spawn_center(100))),
+                Row(Button("+1", lambda: self.spawn_center(1)),
+                    Button("+10", lambda: self.spawn_center(10)),
+                    Button("+100", lambda: self.spawn_center(100))),
                 Header("World"),
                 self._toggle("World walls", "world_walls", "Bounce balls off the edge of the world."),
                 self._slider("World width", "world_width", 600, 8000, 100),
@@ -1010,6 +1275,8 @@ class SandboxScene:
                 Header("Achievements", WARN),
                 Label(self._ach_text, 13, TEXT_DIM),
             ]
+        elif tab == "Online":
+            wd += self._online_widgets()
         else:
             wd += self._inspector_widgets()
         self._inspected = self.selected
@@ -1270,9 +1537,131 @@ class SandboxScene:
             self.save_world(thumb=False)
 
     def to_menu(self):
+        if self.net:
+            self.net.close()
+            self.net = None
         self.autosave()
         self.app.save_profile()
         self.app.set_scene(MenuScene(self.app))
+
+    # ------------------------------------------------------------------
+    # online: multiplayer rooms, cloud physics, sharing levels
+    # ------------------------------------------------------------------
+    def clear_balls(self):
+        self.world.clear_balls()
+        if self.net and self.net.connected:
+            self.net.send_clear()
+
+    def _can_go_online(self):
+        if not N.Api(N.server_url(self.s)).configured:
+            self.toast("Online isn't switched on in this copy of the game yet", WARN)
+            return False
+        if not N.multiplayer_available():
+            self.toast("Multiplayer needs: pip install websocket-client", WARN)
+            return False
+        return True
+
+    def host_room(self, cloud=False):
+        if self.net or not self._can_go_online():
+            return
+        code = N.new_room_code()
+        self.net = N.Session(self, N.server_url(self.s), code, self.s.player_name, creator=True, cloud=cloud)
+        self.toast(f"Hosting room {code}. Tell your friends the code!")
+        self._build_right()
+
+    def join_room(self, code):
+        code = "".join(ch for ch in code.upper() if ch.isalnum())
+        if self.net or not self._can_go_online():
+            return
+        if not 4 <= len(code) <= 8:
+            self.toast("Room codes are 5 letters/numbers", WARN)
+            return
+        self.net = N.Session(self, N.server_url(self.s), code, self.s.player_name)
+        self.toast(f"Joining room {code}...")
+        self._build_right()
+
+    def leave_room(self):
+        if self.net:
+            self.net.close()
+            self.net = None
+            self.toast("Left the room")
+            self._build_right()
+
+    def share_level(self):
+        api = self.app.api()
+        name = (self.share_name or (self.meta or {}).get("name") or "My level").strip()
+        data = self.world.to_dict(balls=False)
+        self.share_status = "Uploading..."
+
+        def done(ok, res):
+            if ok:
+                ups = self.app.profile.setdefault("uploads", {})
+                ups[res["id"]] = {"token": res["token"], "name": name}
+                self.app.save_profile()
+                self.share_status = f"Shared! Level ID: {res['id']}"
+                self.toast(f"Level shared online as {name}")
+            else:
+                self.share_status = f"Upload failed: {res}"
+            self._build_right()
+        api.upload(name, self.s.player_name, self.share_desc, self.s.theme, data, done)
+        self._build_right()
+
+    def _online_widgets(self):
+        wd = []
+        net = self.net
+        if net is None:
+            wd += [
+                Header("Multiplayer"),
+                Label("Build together in the same world. Everyone sees the same blocks, settings and balls.", 13),
+                Button("Host a room with this world", lambda: self.host_room(False), color=ACCENT, height=32),
+                Button("Host with cloud physics", lambda: self.host_room(True), height=32,
+                       tip="The server runs the physics so your PC only has to draw. Has limits on balls, "
+                           "blocks and session length so nobody can overload the server."),
+                Row(TextInput(lambda: self.join_code, lambda v: setattr(self, "join_code", v.upper()[:8]),
+                              "CODE", 8, live=True),
+                    Button("Join", lambda: self.join_room(self.join_code), height=38)),
+                Label("Joining replaces what you see with the host's world.", 12),
+            ]
+        else:
+            wd += [Header(f"Room {net.code}", ACCENT2), Label(lambda: net.status, 13)]
+            for pid, p in list(net.players.items()):
+                tag = " (you)" if pid == net.my_id else ""
+                wd.append(Label(f"- {p['name']}{tag}", 14, p["color"]))
+            if net.connected:
+                if net.cloud:
+                    wd += [Header("Cloud physics"),
+                           Label(lambda: self._cloud_text(), 13, lambda: WARN if (net.cloud_stats or {}).get("overloaded")
+                                 else TEXT),
+                           Button("Stop cloud physics", net.stop_cloud, height=30)]
+                else:
+                    wd += [Button("Start cloud physics", net.start_cloud, height=30,
+                                  tip="Let the server simulate this room (with limits).")]
+            wd += [Label("Press Enter or T to chat. Share the room code with friends.", 12),
+                   Button("Leave room", self.leave_room, color=(90, 30, 45), text_color=TEXT, height=30)]
+        wd += [
+            Header("Share this level"),
+            TextInput(lambda: self.share_name or (self.meta or {}).get("name", ""),
+                      lambda v: setattr(self, "share_name", v), "Level name", 40, live=True),
+            TextInput(lambda: self.share_desc, lambda v: setattr(self, "share_desc", v), "Short description", 120,
+                      live=True),
+            Button("Upload level", self.share_level, color=ACCENT2, height=32,
+                   tip="Uploads the blocks and settings (not the balls). Browse levels from the main menu: ONLINE."),
+            Label(lambda: self.share_status, 13),
+        ]
+        return wd
+
+    def _cloud_text(self):
+        st = self.net.cloud_stats if self.net else None
+        if not st:
+            return "Waiting for the server..."
+        load = 100 * st.get("work", 0) / max(1, st.get("budget", 1))
+        txt = (f"Server balls: {st['balls']} / {st['max']}\nServer load: {load:.0f}%\n"
+               f"Session time left: {st['left'] // 60}:{st['left'] % 60:02d}")
+        if st.get("overloaded"):
+            txt += "\nOverloaded! Removing balls to keep up."
+        if st.get("shed"):
+            txt += f"\nBalls removed for load: {st['shed']}"
+        return txt
 
     def toast(self, text, color=ACCENT):
         self.toasts.append([text, color, 3.0])
@@ -1411,9 +1800,16 @@ class SandboxScene:
             else:
                 self.place_angle += step
         elif k == pygame.K_b:
-            self.world.spawn_center(10)
+            self.spawn_center(self.s.burst_size)
+        elif k == pygame.K_r and not ctrl:
+            self.rain = not self.rain
+            self.toast("Ball rain " + ("on" if self.rain else "off"))
+            if self.left_tab == "Balls":
+                self._build_left()
         elif k == pygame.K_c:
-            self.world.clear_balls()
+            self.clear_balls()
+        elif k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_t) and self.net and self.net.connected:
+            self.chat_input.focus(self.ui)
         elif k == pygame.K_g:
             self.s.snap_to_grid = not self.s.snap_to_grid
             self.toast("Snap to grid " + ("on" if self.s.snap_to_grid else "off"))
@@ -1470,8 +1866,7 @@ class SandboxScene:
         if kind == "block":
             self.place_start = self.snap(wx, wy)
         elif kind == "ball":
-            self.spray_t = 0.0
-            self._spawn_at_mouse()
+            self._start_spray()
         elif name == "select":
             blk = self.world.block_at(wx, wy, 6 / self.cam.zoom)
             if blk:
@@ -1483,8 +1878,7 @@ class SandboxScene:
                     self.select(None)
                 self.drag = ("pan", e.pos[0], e.pos[1], self.cam.x, self.cam.y)
         elif name == "spawn":
-            self.spray_t = 0.0
-            self._spawn_at_mouse()
+            self._start_spray()
         elif name == "grab":
             rad = max(30, 40 / self.cam.zoom)
             self.grabbed = []
@@ -1497,7 +1891,10 @@ class SandboxScene:
         elif name == "eraser":
             self.erase_batch = []
         elif name == "explode":
-            self.world.explode(wx, wy, 170, 15)
+            if self.net and self.net.connected:
+                self.net.send_boom(wx, wy, 170, 15)
+            if not (self.net and self.net.cloud):
+                self.world.explode(wx, wy, 170, 15)
 
     def mouse_up(self, e):
         wx, wy = self.cam.s2w(*e.pos)
@@ -1548,14 +1945,58 @@ class SandboxScene:
                 blk.move_to(nx, ny)
                 self.drag = ("move", blk, ox, oy, snap, True)
 
-    def _spawn_at_mouse(self):
+    def _start_spray(self):
+        self.spray_t = 0.0
+        if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+            self._spawn_at_mouse(self.s.burst_size, max(self.s.spray_size, 40.0))
+        else:
+            self._spawn_at_mouse(1)
+
+    def _spawn_at_mouse(self, n=1, radius=None):
         wx, wy = self.mouse_w
         kind = self.tool[1] if self.tool[0] == "ball" else self.ball_kind
-        a = random.uniform(0, TAU)
-        sp = random.uniform(0, 1.5)
-        vx, vy = self.mouse_vel
-        self.world.spawn_ball(wx + random.uniform(-4, 4), wy + random.uniform(-4, 4),
-                              math.cos(a) * sp + vx * 0.5, math.sin(a) * sp + vy * 0.5, kind=kind)
+        radius = self.s.spray_size if radius is None else radius
+        mvx, mvy = self.mouse_vel
+        out = []
+        for _ in range(n):
+            a = random.uniform(0, TAU)
+            sp = random.uniform(0, 1.5)
+            d = math.sqrt(random.random()) * radius + random.uniform(0, 4)
+            pa = random.uniform(0, TAU)
+            out.append((wx + math.cos(pa) * d, wy + math.sin(pa) * d,
+                        math.cos(a) * sp + mvx * 0.5, math.sin(a) * sp + mvy * 0.5, kind))
+        self.emit_spawns(out)
+
+    def spawn_center(self, n):
+        out = []
+        for _ in range(n):
+            a = random.uniform(0, TAU)
+            sp = self.s.spawn_speed * random.uniform(0.66, 1.33)
+            out.append((random.uniform(-3, 3), random.uniform(-3, 3), math.cos(a) * sp, math.sin(a) * sp,
+                        self.s.spawn_type))
+        self.emit_spawns(out)
+
+    def _rain(self, frames):
+        self.rain_t += frames * self.s.rain_rate / 60.0
+        n = min(int(self.rain_t), 100)
+        if not n:
+            return
+        self.rain_t -= n
+        x0, y0, x1, _ = self.cam.visible_rect()
+        kind = self.ball_kind
+        self.emit_spawns([(random.uniform(x0, x1), y0 + 5, random.uniform(-0.5, 0.5),
+                           random.uniform(0, 2), kind) for _ in range(n)])
+
+    def emit_spawns(self, items):
+        """Spawn balls locally (and tell the room/cloud about them when online)."""
+        net = self.net
+        if net is not None and net.connected:
+            net.send_spawns(items)
+            if net.cloud:
+                return  # the cloud simulates them
+        for x, y, vx, vy, kind in items:
+            if not self.world.spawn_ball(x, y, vx, vy, kind=kind):
+                break
 
     # ------------------------------------------------------------------
     # update & draw
@@ -1594,10 +2035,11 @@ class SandboxScene:
         kind, name = self.tool
         if self.lmb:
             if kind == "ball" or name == "spawn":
-                self.spray_t += frames
-                while self.spray_t >= 3:
-                    self.spray_t -= 3
-                    self._spawn_at_mouse()
+                self.spray_t += frames * self.s.spray_rate / 60.0
+                n = int(self.spray_t)
+                if n:
+                    self.spray_t -= n
+                    self._spawn_at_mouse(min(n, 100))
             elif name == "grab":
                 for b, ox, oy in self.grabbed:
                     b.x, b.y = wx + ox, wy + oy
@@ -1620,8 +2062,21 @@ class SandboxScene:
                 self._force(wx, wy, 1 if name == "attract" else -1, frames)
         if self.rmb:
             self._force(wx, wy, 1, frames)
+        if self.rain:
+            self._rain(frames)
 
         w.update(frames)
+        if self.net:
+            self.net.tick(dt)
+            if self.net.ended:
+                self.net.close()
+                self.net = None
+                self._build_right()
+            elif self.right_tab == "Online" and self.ui.focus is None:
+                self._online_refresh -= dt
+                if self._online_refresh <= 0:
+                    self._online_refresh = 1.0
+                    self._build_right()
         self.app.achievements.update(w, frames)
         for text, color in w.toasts:
             self.toast(text, color)
@@ -1651,6 +2106,17 @@ class SandboxScene:
         """Ghost previews and selection, drawn in world space."""
         if self.selected and self.selected.alive:
             self.selected.draw_selection(surf, cam, ACCENT)
+        if self.net:
+            for pid, (x, y, tool, age) in self.net.cursors.items():
+                if age > 5:
+                    continue
+                p = self.net.players.get(pid)
+                if not p:
+                    continue
+                sx, sy = cam.w2s(x, y)
+                col = p["color"]
+                pygame.draw.polygon(surf, col, [(sx, sy), (sx, sy + 16), (sx + 4, sy + 12), (sx + 11, sy + 12)])
+                self.ui.text(surf, p["name"], (sx + 12, sy + 12), 12, col, True)
         kind, name = self.tool
         mx, my = pygame.mouse.get_pos()
         if not cam.viewport.collidepoint(mx, my) and not self.place_start:
@@ -1697,6 +2163,8 @@ class SandboxScene:
             y += 38
         if self.world.paused:
             self.ui.text(surf, "PAUSED", (vp.centerx, vp.bottom - 60), 28, WARN, True, "center")
+        if self.net:
+            self._draw_chat(surf, vp)
         # hint line
         self._draw_hint(surf, vp)
         if self.show_ui:
@@ -1707,6 +2175,22 @@ class SandboxScene:
                 self.ui.text(surf, f"{self.fps:.0f} FPS", (surf.get_width() - 12, 10), 14, ACCENT, True, "topright")
         if self.show_help:
             self._draw_help(surf)
+
+    def _draw_chat(self, surf, vp):
+        ui = self.ui
+        y = vp.bottom - 60
+        for name, text, color, age in reversed(self.net.chat[-8:]):
+            if age > 12 and self.ui.focus is not self.chat_input:
+                continue
+            a = 1.0 if age < 10 else max(0.0, 1 - (age - 10) / 2)
+            r = ui.text(surf, f"{name}: ", (vp.x + 12, y), 14, mix(BG, color, a), True)
+            ui.text(surf, text, (r.right, y), 14, mix(BG, TEXT, a))
+            y -= 20
+        if self.ui.focus is self.chat_input:
+            self.chat_input.layout(vp.x + 10, vp.bottom - 40, min(520, vp.w - 20))
+            self.chat_input.draw(surf, ui)
+        else:
+            ui.text(surf, "Enter or T to chat", (vp.x + 12, vp.bottom - 44), 12, TEXT_DIM)
 
     def _draw_hint(self, surf, vp):
         kind, name = self.tool
@@ -1737,8 +2221,10 @@ class SandboxScene:
         pygame.draw.line(surf, BORDER, (0, TOP_H - 1), (W, TOP_H - 1))
         ui.text(surf, "FUN BALL GAME", (16, 9), 20, ACCENT, True)
         sub = self.meta["name"] if self.meta else "quick play (not saved)"
-        f11 = ui.font(11)
-        while f11.size(sub)[0] > 160 and len(sub) > 4:
+        if self.net and self.net.connected:
+            sub = f"room {self.net.code} - {len(self.net.players)} online" + (" - CLOUD" if self.net.cloud else "")
+        f11 = ui.font(11, True)
+        while f11.size(sub)[0] > 162 and len(sub) > 4:
             sub = sub[:-2]
         ui.text(surf, sub, (18, 33), 11, ACCENT2 if self.meta else TEXT_DIM, True)
         x = 188
@@ -1825,11 +2311,13 @@ class SandboxScene:
 class SettingsOverlay:
     """The settings screen. Opens over the menu or the game."""
 
-    TABS = ["Display", "Performance", "Gameplay", "Audio"]
+    TABS = ["Display", "Performance", "Gameplay", "Audio", "Online"]
 
     def __init__(self, app):
         self.app = app
         self.tab = "Display"
+        self.test_status = ""
+        self.test_color = TEXT_DIM
         self.list = ScrollList()
         self.build()
 
@@ -1856,6 +2344,21 @@ class SettingsOverlay:
     def _toggle(self, label, attr, tip=None):
         g, st = self._bind(attr)
         return Toggle(label, g, st, tip)
+
+    def _test(self):
+        self.test_status, self.test_color = "Testing...", TEXT_DIM
+
+        def done(ok, data):
+            if ok and isinstance(data, dict) and data.get("game") == "fun-ball-game":
+                lim = data.get("limits", {})
+                self.test_status = (f"Connected! Cloud limits: {lim.get('maxBalls')} balls, "
+                                    f"{lim.get('maxBlocks')} blocks, {lim.get('sessionMinutes')} min sessions, "
+                                    f"{lim.get('maxCloudRooms')} cloud rooms at once.")
+                self.test_color = ACCENT
+            else:
+                self.test_status = data if not ok else "That address isn't a Fun Ball Game server."
+                self.test_color = DANGER
+        self.app.api().health(done)
 
     def _fullscreen(self, v):
         if v != self.app.fullscreen:
@@ -1931,6 +2434,23 @@ class SettingsOverlay:
                 self._toggle("Autosave every 2 minutes", "autosave",
                              "Worlds always save when you leave. This also saves them every 2 minutes."),
             ]
+        elif self.tab == "Online":
+            wd = [
+                Header("You"),
+                TextInput(lambda: s.player_name, lambda v: setattr(s, "player_name", v[:20]), "Your name", 20,
+                          tip="Shown to other players and on levels you share"),
+                Label("To play with friends: open a world, go to the Online tab and press Host. Give your "
+                      "friends the 5-letter code, and they type it in to join.", 13),
+                Row(Button("Test connection", self._test), Spacer(0)),
+                Label(lambda: self.test_status, 13, lambda: self.test_color),
+                Header("Advanced", TEXT_DIM),
+                Label("Leave this empty to use the game's server. Only fill it in to use a different one.", 12),
+                TextInput(lambda: s.server_url, lambda v: setattr(s, "server_url", v.strip()),
+                          "Custom server address (optional)", 120),
+            ]
+            if not N.multiplayer_available():
+                wd.append(Label("Multiplayer needs one extra package: pip install websocket-client "
+                                "(run.py installs it for you).", 13, WARN))
         else:
             wd = [
                 Header("Sound"),

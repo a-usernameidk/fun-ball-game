@@ -1,0 +1,14 @@
+{
+  "name": "fun-ball-game-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/sim.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  },
+  "description": "Online levels, multiplayer rooms and cloud physics for Fun Ball Game"
+}

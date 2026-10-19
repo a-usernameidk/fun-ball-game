@@ -1,3 +1,3 @@
 """Fun Ball Game - a physics sandbox about balls escaping spinning rings."""
 
-__version__ = "4.0.0"
+__version__ = "4.3.0"

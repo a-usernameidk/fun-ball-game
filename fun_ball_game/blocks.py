@@ -13,6 +13,7 @@ Block, set the class attributes and override whatever hooks you need:
 
 import math
 import random
+import string
 
 import pygame
 
@@ -27,6 +28,10 @@ def register(cls):
     REGISTRY[cls.key] = cls
     CATEGORIES[cls.category].append(cls.key)
     return cls
+
+
+def new_uid():
+    return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(10))
 
 
 def create(key, x, y, **kw):
@@ -110,6 +115,7 @@ class Block:
         self.x, self.y, self.angle = float(x), float(y), float(angle)
         self.w, self.h, self.r = type(self).w, type(self).h, type(self).r
         self.alive = True
+        self.uid = new_uid()   # identifies the block in multiplayer rooms
         self.t = random.uniform(0, 100)
         self.flash = 0.0
         for k, v in kw.items():
@@ -255,7 +261,7 @@ class Block:
 
     # --- saving ----------------------------------------------------------
     def to_dict(self):
-        d = {"key": self.key, "x": round(self.x, 2), "y": round(self.y, 2),
+        d = {"key": self.key, "uid": self.uid, "x": round(self.x, 2), "y": round(self.y, 2),
              "angle": round(self.angle, 4), "w": self.w, "h": self.h, "r": self.r}
         for p in self.props:
             d[p[0]] = getattr(self, p[0])
@@ -265,6 +271,7 @@ class Block:
         d = self.to_dict()
         d["x"] += 30
         d["y"] += 30
+        d["uid"] = new_uid()
         return from_dict(d)
 
 
