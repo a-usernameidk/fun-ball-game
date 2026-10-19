@@ -119,7 +119,8 @@ Players never see any of this. The game connects to one server built into it.
    [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server)
    and press **Deploy**. It creates the server and its database for you.
 2. Copy the address it gives you, e.g. `https://fun-ball-game.yourname.workers.dev`.
-3. Put it in `fun_ball_game/net.py` on the `GAME_SERVER = ""` line, and commit.
+3. Put it in `fun_ball_game/net.py` on the `GAME_SERVER` line, and commit. (Done: the game uses
+   `https://fun-ball-game.berf.workers.dev`.)
 
 Server limits and details are in [server/README.md](server/README.md).
 
