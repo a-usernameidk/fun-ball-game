@@ -1,9 +1,9 @@
-# Fun Ball Game v4.2 – Pygame Sandbox Edition
+# Fun Ball Game v4.3 – Pygame Sandbox Edition
 
 A physics sandbox about balls escaping spinning rings. Every time a ball gets out
 through a gap, more balls spawn in the middle, so it snowballs fast. On top of that
-there's a full level editor, **saved worlds** with 8 themes, and **45 blocks, fields and items**, **15 ball types**,
-**10 ready-made levels**, achievements, saving and a proper in-game UI.
+there's a full level editor, **saved worlds** with 9 themes, and **45 blocks, fields and items**, **21 ball types**,
+**16 ready-made levels**, online levels, multiplayer, achievements, saving and a proper in-game UI.
 
 ![Sandbox](docs/screenshot.png)
 
@@ -14,7 +14,7 @@ You need **Python 3.8+**.
 - **Easiest:** double-click `run.py`. It installs Pygame the first time, then starts the game.
 - **Terminal:**
   ```
-  pip install -r requirements.txt
+  pip install -r requirements.txt   # pygame + websocket-client (for multiplayer)
   python main.py
   ```
   (`python -m fun_ball_game` works too.)
@@ -29,7 +29,21 @@ balls, settings, coins, stats and the camera. Worlds save when you leave, and ev
 minutes while you play. You can also rename, duplicate or delete them, and each one gets
 a thumbnail. Use QUICK PLAY to try a level without making a world.
 
-**World themes:** Midnight, Deep Space, Moon, Ocean, Volcano, Forest, Neon City and
+**Online (v4.3):** host your own server on Cloudflare Workers (steps in
+[server/README.md](server/README.md)) and paste its address into Settings > Online. Then:
+- **Online levels:** share any world as a level, and browse, search, like and download other people's.
+- **Multiplayer:** host a room from a world's Online tab and give friends the 5-letter code.
+  You all build in the same world: blocks, settings, spawns and explosions sync live, and
+  you can see each other's cursors and chat (Enter or T).
+- **Cloud physics:** let the server simulate a room so your PC only has to draw it. The
+  server enforces limits (balls, blocks, a CPU-work budget, session time, cloud rooms at
+  once, and per-player spawn and message rates) so nobody can overload it with a lag machine.
+
+**Fast spawning:** in the Balls tab, set the spray rate (up to 1,000 balls a second), the
+spray brush size, and the burst size for Shift+click, B and the +N button. You can also
+turn on Ball Rain with R.
+
+**World themes:** Midnight, Deep Space, Moon, Ocean, Volcano, Forest, Glacier, Neon City and
 Candy Land. Each has its own background (stars, bubbles, embers, fireflies or neon rain)
 and its own starting physics, e.g. low gravity on the Moon, drag in the Ocean and heavy
 gravity in the Volcano.
@@ -49,10 +63,11 @@ Shrink Ray, Coin, Mine, Laser (can rotate), Goal Hoop, Tesla Coil, Transmuter,
 Gravity Flip, Turbo Ring, Teleporter, Counter
 
 **Ball types:** Normal, Heavy, Bouncy, Ghost, Fireball, Bomb, Rainbow, Splitter,
-Magnet, Tiny, Gold, Ice, Seeker, Sticky, Cluster
+Magnet, Tiny, Gold, Ice, Seeker, Sticky, Cluster, Rocket, Balloon, Phantom, Hyper, Glass, Eater
 
 **Levels:** Classic (the original game), Nested Rings, Pinball, Portal Maze,
-Black Holes, Ball Factory, Demolition, Chaos, Arcade, Empty Sandbox
+Black Holes, Ball Factory, Demolition, Chaos, Arcade, Spiral Galaxy, Ice Cave, Lava Run,
+Plinko, Marble Run, Rocket Lab, Empty Sandbox
 
 **Settings:** up to 6 nested rings, plus rotation speed, gap count and size, gravity
 strength and direction, time speed, bounciness, energy boost, ball limit and limit
@@ -82,7 +97,9 @@ ball type, portal channel, black hole strength, and so on).
 | Delete / Ctrl+D | Delete / duplicate selected block |
 | Ctrl+Z | Undo |
 | Ctrl+S / Ctrl+L | Save the world (or quick save in quick play) / quick load |
-| B / C | Spawn 10 balls / clear balls |
+| B / C | Spawn a burst of balls / clear balls |
+| Shift+click / R | Burst at the mouse / ball rain |
+| Enter or T | Chat (in a multiplayer room) |
 | 1–9 | Pick a tile in the current toolbox tab |
 | + / - | Simulation speed |
 | G | Snap to grid |
@@ -109,6 +126,8 @@ fun_ball_game/
   particles.py, audio.py effects and generated sound (no asset files)
   presets.py             the built-in levels
   worlds.py, storage.py  saved worlds and save files
+  net.py                 online levels, multiplayer and cloud-physics client
+server/                  Cloudflare Worker: levels API, rooms, cloud physics (JavaScript)
   achievements.py        achievements
   settings.py            all settings and colour themes
 legacy/v3/               the original Tkinter version

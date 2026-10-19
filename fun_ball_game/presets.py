@@ -164,6 +164,103 @@ def arcade(world):
         _add(world, "coin", -250 + i * 100, 260)
 
 
+def galaxy(world):
+    _start(world, ring_count=5, ring_radius=110, ring_spacing=55, gap_count=1, gap_size=0.5,
+           rotation_speed=0.02, gravity=0.0, balls_per_escape=2, theme="Deep Space",
+           color_scheme="Ocean", spawn_type="rainbow", world_walls=False, escaped_lifetime=15)
+    _add(world, "vortex", 0, 0, r=480, strength=0.25)
+    for i in range(16):
+        a = i * math.tau / 16
+        _add(world, "coin", math.cos(a) * 470, math.sin(a) * 470, value=2)
+    for i in range(4):
+        a = i * math.tau / 4 + 0.4
+        _add(world, "blackhole", math.cos(a) * 760, math.sin(a) * 760, r=260, strength=0.7)
+    world.spawn_center(4)
+
+
+def ice_cave(world):
+    _start(world, ring_count=0, gravity=0.14, theme="Glacier", color_scheme="Ocean",
+           world_width=1800, world_height=1200, wall_grip=0.0, spawn_type="ice")
+    _add(world, "cannon", -800, -480, angle=0.25, interval=30, power=11, ball_kind="normal")
+    for i in range(5):
+        _add(world, "ice", -560 + i * 230, -320 + i * 150, angle=0.3, w=260)
+    _add(world, "freeze", 0, 0, r=140, duration=180)
+    _add(world, "freeze", 520, 260, r=110)
+    _add(world, "glass", 300, -200, angle=-0.5, w=200)
+    _add(world, "glass", -300, 200, angle=0.5, w=200)
+    for i in range(7):
+        _add(world, "brick", -300 + i * 100, 520, w=90, h=30)
+    _add(world, "cannon", 800, -480, angle=math.pi - 0.25, interval=50, power=10, ball_kind="sticky")
+
+
+def lava_run(world):
+    _start(world, ring_count=0, gravity=0.18, theme="Volcano", color_scheme="Fire",
+           world_width=2000, world_height=1300)
+    _add(world, "lava", 0, 600, w=1980, h=80)
+    _add(world, "cannon", -920, -520, angle=0.1, interval=22, power=13)
+    plats = [(-620, -300, 0.15), (-200, -120, -0.15), (220, 60, 0.15), (620, 240, -0.15)]
+    for x, y, a in plats:
+        _add(world, "wall", x, y, angle=a, w=300)
+        _add(world, "saw", x + 60, y - 90, r=26, spin=0.3)
+    _add(world, "mover", 0, 380, w=200, travel=500, speed=0.02)
+    _add(world, "turbo", -420, -240)
+    _add(world, "turbo", 420, 160)
+    _add(world, "hoop", 880, 420, value=25)
+    _add(world, "tesla", -880, 300, range=200)
+
+
+def plinko(world):
+    _start(world, ring_count=0, gravity=0.2, world_width=1300, world_height=1500, theme="Neon City",
+           ball_bounce=0.5, wall_bounce=0.7)
+    _add(world, "whitehole", 0, -680, r=60, strength=0.0, interval=12)
+    for row in range(10):
+        n = 9 if row % 2 == 0 else 8
+        for i in range(n):
+            x = (i - (n - 1) / 2) * 120
+            _add(world, "bumper", x, -480 + row * 95, r=11, power=2.5)
+    for i in range(9):
+        x = (i - 4) * 130
+        _add(world, "wall", x - 65, 560, angle=math.pi / 2, w=180, h=14)
+        _add(world, "hoop" if i % 2 == 0 else "coin", x, 610 if i % 2 == 0 else 600,
+             value=(5, 1, 20, 1, 50, 1, 20, 1, 5)[i], r=26 if i % 2 == 0 else 12)
+    _add(world, "wall", 585, 560, angle=math.pi / 2, w=180, h=14)
+
+
+def marble_run(world):
+    _start(world, ring_count=0, gravity=0.16, world_width=1900, world_height=1400, theme="Forest")
+    _add(world, "cannon", -880, -620, angle=0.0, interval=20, power=7)
+    y = -520
+    for i in range(6):
+        left = i % 2 == 0
+        _add(world, "conveyor", (-150 if left else 150), y, angle=0.12 if left else -0.12, w=1300,
+             speed=5 if left else -5)
+        y += 190
+    _add(world, "door", 0, -430, angle=0.0, w=160)
+    _add(world, "oneway", 600, -140, angle=0.0, w=200)
+    _add(world, "counter", -600, 30)
+    _add(world, "counter", 600, 220)
+    _add(world, "splitter", 0, 120)
+    _add(world, "paint", -300, 410, hue=0.85)
+    _add(world, "transmuter", 300, 410, ball_kind="gold")
+    _add(world, "hoop", 0, 640, value=10)
+
+
+def rocket_lab(world):
+    _start(world, ring_count=2, ring_radius=200, ring_spacing=120, gap_count=2, gap_size=0.6,
+           gravity=0.08, spawn_type="rocket", theme="Moon", world_width=2200, world_height=1600,
+           escaped_lifetime=12)
+    _add(world, "cannon", -950, 650, angle=-0.9, interval=40, power=9, ball_kind="balloon")
+    _add(world, "cannon", 950, 650, angle=math.pi + 0.9, interval=40, power=9, ball_kind="rocket")
+    for i in range(6):
+        a = i * math.tau / 6
+        _add(world, "turbo", math.cos(a) * 480, math.sin(a) * 480)
+    _add(world, "gswitch", 0, -560, turn=90)
+    _add(world, "gswitch", 0, 560, turn=90)
+    _add(world, "antigrav", -700, 0, w=260, h=500)
+    _add(world, "slow", 700, 0, r=200)
+    world.spawn_center(3)
+
+
 def empty(world):
     _start(world, ring_count=0)
 
@@ -178,5 +275,11 @@ PRESETS = [
     ("Demolition", "Knock down a tower of bricks, glass and TNT with heavy, fire and bomb balls.", demolition),
     ("Chaos", "Three rings, rainbow balls, splitters, bumpers and a giant vortex.", chaos),
     ("Arcade", "Flippers, saws, crates, doors, tesla coils and a gravity switch. New in v4.1!", arcade),
+    ("Spiral Galaxy", "Five rings in zero gravity, a giant vortex and four black holes.", galaxy),
+    ("Ice Cave", "Slippery ice ramps, freeze zones and ice balls that freeze everything.", ice_cave),
+    ("Lava Run", "Get balls over the platforms and saws without falling in the lava.", lava_run),
+    ("Plinko", "Balls rain down through a field of pegs into scoring hoops.", plinko),
+    ("Marble Run", "Zig-zagging conveyors, doors, counters and a gold transmuter.", marble_run),
+    ("Rocket Lab", "Rockets, balloons, turbo rings and gravity that keeps turning.", rocket_lab),
     ("Empty Sandbox", "Nothing at all. Build whatever you want.", empty),
 ]

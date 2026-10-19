@@ -1,0 +1,15 @@
+{
+  "name": "fun-ball-game-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:local": "wrangler d1 execute fun-ball-game --local --file=schema.sql",
+    "db:remote": "wrangler d1 execute fun-ball-game --remote --file=schema.sql",
+    "test:sim": "node test/sim.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^3.114.0"
+  }
+}

@@ -1,0 +1,38 @@
+# Fun Ball Game server. See README.md in this folder for setup steps.
+name = "fun-ball-game"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fun-ball-game"
+# Paste the database_id that `npx wrangler d1 create fun-ball-game` prints:
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[durable_objects]
+bindings = [
+  { name = "ROOMS", class_name = "Room" },
+  { name = "LIMITER", class_name = "Limiter" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room", "Limiter"]
+
+# Limits. These stop anyone from overloading your server. Lower them if you are
+# on the free plan or worried about usage; raise them if you have headroom.
+[vars]
+ROOM_MAX_PLAYERS = "8"        # players per room
+MSG_RATE = "60"               # messages per second per player
+SPAWN_RATE = "500"            # balls a player may spawn per second (cloud rooms)
+MAX_MSG_KB = "1024"           # biggest single message (world snapshots when joining)
+CLOUD_MAX_BALLS = "2000"      # balls a cloud room can simulate
+CLOUD_MAX_SEND_BALLS = "2000" # balls streamed to players per snapshot
+CLOUD_MAX_BLOCKS = "300"      # blocks a cloud room will simulate
+CLOUD_MAX_SUBSTEPS = "3"      # physics accuracy cap
+CLOUD_WORK_BUDGET = "60000"   # collision checks per tick before the room sheds balls
+CLOUD_SESSION_MINUTES = "20"  # a cloud session stops after this long (players can restart it)
+CLOUD_MAX_ROOMS = "5"         # cloud rooms allowed to run at the same time, server-wide
+UPLOADS_PER_HOUR = "10"       # level uploads per player per hour
+MAX_LEVEL_KB = "400"          # biggest level upload
+MAX_LEVEL_BLOCKS = "2000"

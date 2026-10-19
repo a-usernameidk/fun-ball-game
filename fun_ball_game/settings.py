@@ -64,6 +64,9 @@ THEMES = {
     "Neon City": dict(bg=(14, 4, 26), grid=(46, 14, 70), grid2=(80, 20, 110), border=(255, 46, 180),
                       fx="rain", desc="Bright neon and extra-bouncy walls.",
                       physics=dict(color_scheme="Neon Mix", energy_boost=1.05)),
+    "Glacier": dict(bg=(8, 18, 30), grid=(20, 40, 60), grid2=(30, 58, 86), border=(150, 210, 255),
+                    fx="snow", desc="Icy and slippery, with falling snow.",
+                    physics=dict(color_scheme="Ocean", wall_grip=0.0, wall_bounce=0.95)),
     "Candy Land": dict(bg=(34, 12, 32), grid=(62, 26, 58), grid2=(90, 40, 84), border=(255, 150, 220),
                        fx="bubbles", desc="Sweet pastel colours and springy walls.",
                        physics=dict(color_scheme="Pastel", wall_bounce=1.05)),
@@ -109,6 +112,10 @@ class Settings:
     spawn_speed: float = 4.5
     spawn_type: str = "normal"
     escaped_lifetime: float = 20.0  # seconds a free ball lives (0 = forever)
+    spray_rate: int = 20         # balls per second while holding the spawn tool
+    spray_size: float = 0.0      # radius of the spray brush (world units)
+    burst_size: int = 50         # Shift+click / B key / +N button
+    rain_rate: int = 30          # balls per second for Ball Rain
 
     # --- physics ---------------------------------------------------------
     gravity: float = 0.12
@@ -147,6 +154,10 @@ class Settings:
     detail_threshold: int = 900  # above this many balls glow/highlights switch off
     autosave: bool = True
 
+    # --- online ------------------------------------------------------------
+    server_url: str = ""         # your Cloudflare Worker, e.g. https://fun-ball-game.you.workers.dev
+    player_name: str = ""
+
     def to_dict(self):
         return asdict(self)
 
@@ -176,6 +187,7 @@ class Settings:
 # Player preferences: kept when loading levels or save files, stored in the profile.
 PREF_FIELDS = ("sound", "volume", "fps_limit", "show_fps", "max_balls", "unlimited_balls",
                "limit_action", "max_particles", "detail_threshold", "autosave", "glow",
-               "particles", "screen_shake", "trails", "trail_length", "substeps")
+               "particles", "screen_shake", "trails", "trail_length", "substeps",
+               "spray_rate", "spray_size", "burst_size", "rain_rate", "server_url", "player_name")
 
 FPS_OPTIONS = [30, 45, 60, 75, 90, 120, 144, 165, 240, 360, 0]

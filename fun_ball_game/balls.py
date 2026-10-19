@@ -35,6 +35,18 @@ BALL_TYPES = {
                    desc="Sticks to whatever it hits for a second, then drops off."),
     "cluster": dict(name="Cluster", color=(255, 170, 0), size=1.4, density=1.5, bounce=0.9,
                     desc="Bursts into 6 tiny balls on its 3rd bounce."),
+    "rocket": dict(name="Rocket", color=(255, 80, 40), size=0.9, density=1.0, bounce=0.9,
+                   desc="Keeps accelerating in whatever direction it's going."),
+    "balloon": dict(name="Balloon", color=(255, 120, 160), size=1.3, density=0.3, bounce=0.8,
+                    desc="Floats upwards against gravity. Pops on its 3rd bounce."),
+    "phantom": dict(name="Phantom", color=(150, 120, 255), size=1.0, density=1.0, bounce=1.0,
+                    desc="Flickers between solid and ghost every second."),
+    "hyper": dict(name="Hyper", color=(0, 255, 120), size=0.9, density=1.0, bounce=1.0,
+                  desc="Randomly changes direction every half second."),
+    "glass": dict(name="Glass", color=(200, 240, 255), size=1.0, density=1.0, bounce=1.0,
+                  desc="Shatters the first time it hits anything hard."),
+    "eater": dict(name="Eater", color=(40, 40, 40), size=1.2, density=3.0, bounce=0.8,
+                  desc="Swallows smaller balls it touches and grows bigger."),
 }
 BALL_ORDER = list(BALL_TYPES)
 
@@ -43,7 +55,7 @@ class Ball:
     __slots__ = ("x", "y", "vx", "vy", "r", "mass", "color", "kind", "layer",
                  "rewarded", "history", "alive", "age", "free_age", "bounces",
                  "cooldown", "split_depth", "bounce_mul", "ghost", "hue",
-                 "grabbed", "frozen", "prev_bounces")
+                 "grabbed", "frozen", "prev_bounces", "nid")
 
     def __init__(self, x, y, vx, vy, r, color, kind="normal", trail=10):
         d = BALL_TYPES.get(kind, BALL_TYPES["normal"])
@@ -67,6 +79,7 @@ class Ball:
         self.grabbed = False
         self.frozen = 0.0       # frames left frozen in place (freeze zone, ice ball...)
         self.prev_bounces = 0
+        self.nid = 0            # network id in multiplayer / cloud rooms
 
     def set_radius(self, r):
         d = BALL_TYPES.get(self.kind, BALL_TYPES["normal"])
