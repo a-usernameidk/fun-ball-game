@@ -42,6 +42,39 @@ COLOR_SCHEMES = {
 RING_COLORS = [(255, 51, 136), (0, 220, 255), (255, 204, 0), (150, 90, 255),
                (60, 255, 120)]
 
+# World themes: how a world looks, plus the physics it starts with.
+THEMES = {
+    "Midnight": dict(bg=(12, 12, 20), grid=(30, 30, 48), grid2=(44, 44, 70), border=(70, 70, 110),
+                     fx=None, desc="The classic dark arena.", physics={}),
+    "Deep Space": dict(bg=(4, 4, 12), grid=(16, 16, 32), grid2=(28, 28, 52), border=(70, 70, 140),
+                       fx="stars", desc="Almost no gravity. Balls drift among the stars.",
+                       physics=dict(gravity=0.03, color_scheme="Ocean")),
+    "Moon": dict(bg=(16, 16, 22), grid=(34, 34, 44), grid2=(50, 50, 64), border=(120, 120, 140),
+                 fx="stars", desc="Very low gravity, so balls float for ages.",
+                 physics=dict(gravity=0.05, color_scheme="Mono")),
+    "Ocean": dict(bg=(4, 22, 40), grid=(10, 40, 66), grid2=(16, 58, 92), border=(40, 120, 180),
+                  fx="bubbles", desc="Floaty and slow, like being underwater.",
+                  physics=dict(gravity=0.07, air_drag=0.006, color_scheme="Ocean")),
+    "Volcano": dict(bg=(26, 8, 6), grid=(50, 18, 12), grid2=(76, 26, 16), border=(170, 60, 20),
+                    fx="embers", desc="Hot and heavy. Strong gravity and fiery colours.",
+                    physics=dict(gravity=0.18, color_scheme="Fire")),
+    "Forest": dict(bg=(6, 20, 10), grid=(16, 40, 22), grid2=(24, 60, 32), border=(60, 140, 70),
+                   fx="fireflies", desc="Calm and green, with fireflies.",
+                   physics=dict(color_scheme="Matrix")),
+    "Neon City": dict(bg=(14, 4, 26), grid=(46, 14, 70), grid2=(80, 20, 110), border=(255, 46, 180),
+                      fx="rain", desc="Bright neon and extra-bouncy walls.",
+                      physics=dict(color_scheme="Neon Mix", energy_boost=1.05)),
+    "Candy Land": dict(bg=(34, 12, 32), grid=(62, 26, 58), grid2=(90, 40, 84), border=(255, 150, 220),
+                       fx="bubbles", desc="Sweet pastel colours and springy walls.",
+                       physics=dict(color_scheme="Pastel", wall_bounce=1.05)),
+}
+THEME_ORDER = list(THEMES)
+
+
+def theme(name):
+    return THEMES.get(name, THEMES["Midnight"])
+
+
 LIMIT_ACTIONS = ["Delete Oldest", "Stop Spawning", "Pause Simulation"]
 
 
@@ -91,6 +124,7 @@ class Settings:
     max_speed: float = 30.0
 
     # --- visuals ---------------------------------------------------------
+    theme: str = "Midnight"
     color_scheme: str = "Neon Mix"
     trails: bool = True
     trail_length: int = 10

@@ -5,7 +5,7 @@ import random
 
 import pygame
 
-from .settings import BG
+from .settings import BG, theme
 from .util import TAU, mix, scale
 
 _GLOW = {}
@@ -33,6 +33,8 @@ def glow_surface(color, radius):
 class Renderer:
     def __init__(self):
         self.font = pygame.font.Font(None, 22)
+        self.amb = []          # ambient background particles (bubbles, embers...)
+        self.amb_key = None
 
     def draw(self, surf, world, cam, extra=None):
         s = world.s
@@ -60,7 +62,7 @@ class Renderer:
                 blk.draw(surf, cam)
 
         self._balls(surf, world, cam, vx0, vy0, vx1, vy1)
-        world.fx.draw(surf, cam, self.font)
+        world.fx.draw(surf, cam, self.font, _BG)
 
         if s.show_hitboxes:
             self._hitboxes(surf, world, cam)
@@ -73,17 +75,23 @@ class Renderer:
 
     # ------------------------------------------------------------------
     def _background(self, surf, world, cam):
+        global _BG
         vp = cam.viewport
-        surf.fill(BG, vp)
         s = world.s
+        th = theme(s.theme)
+        if th["bg"] != _BG:
+            _BG = th["bg"]
+            _DIM.clear()
+        surf.fill(_BG, vp)
+        if th["fx"]:
+            self._ambient(surf, th, cam)
         if s.show_grid:
             spacing = 50
             while spacing * cam.zoom < 16:
                 spacing *= 2
             x0, y0, x1, y1 = cam.visible_rect()
             gx = math.floor(x0 / spacing) * spacing
-            col = (30, 30, 48)
-            col2 = (44, 44, 70)
+            col, col2 = th["grid"], th["grid2"]
             while gx <= x1:
                 sx, _ = cam.w2s(gx, 0)
                 gy = math.floor(y0 / spacing) * spacing
@@ -98,8 +106,58 @@ class Renderer:
         a = cam.w2s(-hw, -hh)
         b = cam.w2s(hw, hh)
         rect = pygame.Rect(int(a[0]), int(a[1]), int(b[0] - a[0]), int(b[1] - a[1]))
-        pygame.draw.rect(surf, (70, 70, 110) if s.world_walls else (40, 40, 60), rect,
+        pygame.draw.rect(surf, th["border"] if s.world_walls else mix(_BG, th["border"], 0.4), rect,
                          3 if s.world_walls else 1)
+
+    def _ambient(self, surf, th, cam):
+        """Decorative background life: stars, bubbles, embers, fireflies, rain."""
+        vp = cam.viewport
+        kind = th["fx"]
+        t = pygame.time.get_ticks() / 1000.0
+        key = (kind, vp.size)
+        rnd = random.Random(42)
+        if self.amb_key != key:
+            self.amb_key = key
+            n = 160 if kind == "stars" else 70
+            self.amb = [[rnd.random() * vp.w, rnd.random() * vp.h, rnd.random(), rnd.random()]
+                        for _ in range(n)]
+        W, H = vp.w, vp.h
+        if kind == "stars":
+            for i, (u, v, a, b) in enumerate(self.amb):
+                depth = 0.15 + 0.5 * a
+                x = (u - cam.x * depth * cam.zoom) % W
+                y = (v - cam.y * depth * cam.zoom) % H
+                tw = 0.5 + 0.5 * math.sin(t * (1 + 2 * b) + i)
+                c = mix(_BG, (210, 220, 255), 0.25 + 0.6 * tw * a)
+                size = 1 if a < 0.8 else 2
+                surf.fill(c, (vp.x + int(x), vp.y + int(y), size, size))
+            return
+        for p in self.amb:
+            u, v, a, b = p
+            if kind == "bubbles":
+                p[1] = (v - (0.3 + a * 0.9)) % H
+                x = (u + math.sin(t * 1.5 + b * 10) * 6) % W
+                pygame.draw.circle(surf, mix(_BG, (150, 210, 255), 0.25 + 0.2 * a),
+                                   (vp.x + x, vp.y + p[1]), 2 + a * 4, 1)
+            elif kind == "embers":
+                p[1] = (v - (0.4 + a * 1.2)) % H
+                x = (u + math.sin(t + b * 6) * 10) % W
+                k = p[1] / H
+                surf.fill(mix(_BG, (255, 140 + int(80 * a), 40), 0.2 + 0.6 * k),
+                          (vp.x + int(x), vp.y + int(p[1]), 2, 2))
+            elif kind == "fireflies":
+                x = (u + math.sin(t * 0.4 + b * 20) * 40) % W
+                y = (v + math.cos(t * 0.3 + a * 20) * 30) % H
+                glow = max(0.0, math.sin(t * (0.8 + a) + b * 30))
+                if glow > 0.1:
+                    pygame.draw.circle(surf, mix(_BG, (200, 255, 120), glow * 0.8),
+                                       (vp.x + x, vp.y + y), 1 + glow * 2)
+            elif kind == "rain":
+                p[1] = (v + 6 + a * 8) % H
+                p[0] = (u + 1.5) % W
+                col = mix(_BG, (255, 60, 200) if b < 0.5 else (0, 220, 255), 0.25 + 0.3 * a)
+                x0, y0 = vp.x + p[0], vp.y + p[1]
+                pygame.draw.line(surf, col, (x0, y0), (x0 - 3, y0 - 12 - a * 10), 1)
 
     def _rings(self, surf, world, cam):
         z = cam.zoom
@@ -155,7 +213,7 @@ class Renderer:
                 g = glow_surface(b.color, ri * 2 + 2)
                 surf.blit(g, (sx - ri * 2 - 2, sy - ri * 2 - 2), special_flags=pygame.BLEND_RGB_ADD)
             if b.ghost:
-                circle(surf, mix(BG, b.color, 0.35), (sx, sy), r)
+                circle(surf, _dim(b.color, 0.35), (sx, sy), r)
                 circle(surf, b.color, (sx, sy), r, 1)
                 continue
             if b.kind == "bomb":
@@ -192,6 +250,7 @@ class Renderer:
 
 
 _DIM = {}
+_BG = BG
 
 
 def _dim(color, k):
@@ -200,7 +259,7 @@ def _dim(color, k):
     if c is None:
         if len(_DIM) > 4000:
             _DIM.clear()
-        c = _DIM[key] = mix(BG, color, k)
+        c = _DIM[key] = mix(_BG, color, k)
     return c
 
 

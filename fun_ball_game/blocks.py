@@ -1417,7 +1417,7 @@ class Flipper(Block):
 
 @register
 class OneWay(Block):
-    key, name = "oneway", "One-Way Gate"
+    key, name = "oneway", "One-Way"
     desc = "Balls pass through in the arrow's direction but bounce off the other side."
     color = (80, 200, 255)
     h = 16.0

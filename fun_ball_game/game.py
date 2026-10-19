@@ -1,9 +1,8 @@
 """The application: main menu, sandbox scene, editor tools and UI panels."""
 
-import json
 import math
-import os
 import random
+import time
 from pathlib import Path
 
 import pygame
@@ -14,39 +13,20 @@ from .audio import Audio
 from .balls import BALL_ORDER, BALL_TYPES
 from .presets import PRESETS
 from .render import Renderer
+from . import worlds as W
 from .settings import (ACCENT, ACCENT2, BG, BORDER, COLOR_SCHEMES, DANGER, FPS_OPTIONS,
-                       LIMIT_ACTIONS, PANEL, PANEL_LIGHT, TEXT, TEXT_DIM, WARN, Settings)
+                       LIMIT_ACTIONS, PANEL, PANEL_LIGHT, TEXT, TEXT_DIM, THEME_ORDER, THEMES, WARN,
+                       Settings, theme)
 from .ui import (UI, Button, Choice, Grid, Header, Label, NumberInput, Row, ScrollList, Slider,
-                 Spacer, Tabs, Tile, Toggle, panel, wrap)
+                 Spacer, Tabs, TextInput, Tile, Toggle, panel, wrap)
 from .util import Camera, TAU, clamp, mix, rotate
+from .storage import SAVE_DIR, read_json as _read_json, write_json as _write_json
 from .world import World
 
-SAVE_DIR = Path(os.environ.get("FUN_BALL_SAVES", Path(__file__).resolve().parent.parent / "saves"))
 TOP_H = 54
 LEFT_W = 248
 RIGHT_W = 296
 SPEEDS = [0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]
-
-
-# --------------------------------------------------------------------------
-# persistence
-# --------------------------------------------------------------------------
-def _read_json(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
-
-
-def _write_json(path, data):
-    try:
-        SAVE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=1)
-        return True
-    except OSError:
-        return False
 
 
 class _Mute:
@@ -145,7 +125,7 @@ HELP_LINES = [
     ("Q  /  E", "Rotate the selected or ghost block by 15 degrees"),
     ("Delete  /  Ctrl+D", "Delete  /  duplicate the selected block"),
     ("Ctrl+Z", "Undo"),
-    ("Ctrl+S  /  Ctrl+L", "Quick save  /  quick load (slot 1)"),
+    ("Ctrl+S  /  Ctrl+L", "Save the world  /  quick load (slot 1)"),
     ("B  /  C", "Spawn 10 balls in the centre  /  clear all balls"),
     ("1 - 9", "Pick a tile in the current toolbox tab"),
     ("+  /  -", "Simulation speed"),
@@ -176,6 +156,7 @@ class App:
         self.ui = UI()
         self.ui.sound = self.audio.play
         self.achievements = Achievements(self.profile.get("achievements"))
+        W.migrate_autosave()
         self.running = True
         self.scene = MenuScene(self)
 
@@ -270,24 +251,87 @@ class App:
 # Main menu
 # ==========================================================================
 class PresetCard(Button):
-    def __init__(self, name, desc, on_click):
+    def __init__(self, name, desc, on_click, selected=None):
         super().__init__(name, on_click, height=74)
         self.desc = desc
+        self.selected = selected
 
     def draw(self, surf, ui):
         hov = self.rect.collidepoint(ui.mouse)
-        pygame.draw.rect(surf, (36, 36, 58) if hov else PANEL_LIGHT, self.rect, border_radius=10)
-        pygame.draw.rect(surf, ACCENT if hov else BORDER, self.rect, 1 + hov, border_radius=10)
-        ui.text(surf, self.text, (self.rect.x + 12, self.rect.y + 8), 16, ACCENT if hov else TEXT, True)
+        sel = bool(self.selected and self.selected())
+        pygame.draw.rect(surf, (36, 36, 58) if hov or sel else PANEL_LIGHT, self.rect, border_radius=10)
+        pygame.draw.rect(surf, ACCENT if hov or sel else BORDER, self.rect, 1 + (hov or sel), border_radius=10)
+        ui.text(surf, self.text, (self.rect.x + 12, self.rect.y + 8), 16, ACCENT if hov or sel else TEXT, True)
         for i, line in enumerate(wrap(ui.font(13), self.desc, self.rect.w - 24)[:3]):
             ui.text(surf, line, (self.rect.x + 12, self.rect.y + 32 + i * 16), 13, TEXT_DIM)
 
 
+def theme_swatch(surf, rect, name, t=0.0):
+    """A little preview of a world theme."""
+    th = theme(name)
+    prev = surf.get_clip()
+    surf.set_clip(rect.clip(prev) if prev else rect)
+    surf.fill(th["bg"], rect)
+    for gx in range(rect.x + 6, rect.right, 14):
+        for gy in range(rect.y + 6, rect.bottom, 14):
+            surf.fill(th["grid2"], (gx, gy, 2, 2))
+    rnd = random.Random(name)
+    fx = th["fx"]
+    for i in range(14):
+        x = rect.x + rnd.random() * rect.w
+        y = rect.y + rnd.random() * rect.h
+        if fx == "stars":
+            surf.fill((220, 225, 255), (x, y, 1 + (i % 4 == 0), 1 + (i % 4 == 0)))
+        elif fx == "bubbles":
+            pygame.draw.circle(surf, mix(th["bg"], (160, 215, 255), 0.6), (x, y), 2 + i % 3, 1)
+        elif fx == "embers":
+            surf.fill((255, 150, 50), (x, y, 2, 2))
+        elif fx == "fireflies":
+            pygame.draw.circle(surf, (210, 255, 130), (x, y), 2)
+        elif fx == "rain":
+            pygame.draw.line(surf, (255, 60, 200) if i % 2 else (0, 220, 255), (x, y), (x - 2, y - 8))
+    pal = COLOR_SCHEMES.get(th["physics"].get("color_scheme", "Neon Mix")) or COLOR_SCHEMES["Neon Mix"]
+    c = rect.center
+    R = min(rect.w, rect.h) * 0.32
+    pygame.draw.circle(surf, th["border"], c, R, 3)
+    for i in range(3):
+        a = t * 0.02 + i * 2.1
+        pygame.draw.circle(surf, pal[i % len(pal)], (c[0] + math.cos(a) * R * 0.5, c[1] + math.sin(a) * R * 0.5),
+                           max(2, R * 0.16))
+    surf.set_clip(prev)
+
+
+class WorldCard(Button):
+    def __init__(self, meta, thumb, on_click, selected):
+        super().__init__(meta["name"], on_click, height=86)
+        self.meta, self.thumb, self.selected = meta, thumb, selected
+
+    def draw(self, surf, ui):
+        hov = self.rect.collidepoint(ui.mouse)
+        sel = self.selected()
+        pygame.draw.rect(surf, (38, 38, 62) if sel else ((30, 30, 50) if hov else PANEL_LIGHT), self.rect,
+                         border_radius=10)
+        pygame.draw.rect(surf, ACCENT if sel else (mix(BORDER, ACCENT, 0.4) if hov else BORDER), self.rect,
+                         2 if sel else 1, border_radius=10)
+        tr = pygame.Rect(self.rect.x + 8, self.rect.y + 8, 112, 70)
+        if self.thumb:
+            surf.blit(pygame.transform.smoothscale(self.thumb, tr.size), tr)
+        else:
+            theme_swatch(surf, tr, self.meta.get("theme", "Midnight"))
+        pygame.draw.rect(surf, BORDER, tr, 1)
+        x = tr.right + 14
+        ui.text(surf, self.meta["name"], (x, self.rect.y + 10), 17, ACCENT if sel else TEXT, True)
+        ui.text(surf, f"{self.meta.get('theme', 'Midnight')}  -  played {W.fmt_time(self.meta.get('last_played'))}",
+                (x, self.rect.y + 36), 13, TEXT_DIM)
+        ui.text(surf, f"{self.meta['blocks']} blocks   {self.meta['coins']} coins   "
+                f"{W.fmt_playtime(self.meta.get('playtime', 0))}", (x, self.rect.y + 56), 13, TEXT_DIM)
+
+
 class MenuScene:
-    def __init__(self, app):
+    def __init__(self, app, mode="main"):
         self.app = app
         self.ui = app.ui
-        self.mode = "main"
+        self.mode = mode
         s = Settings(ring_count=3, ring_radius=110, ring_spacing=55, gap_count=2, gap_size=0.55,
                      max_balls=350, escaped_lifetime=5, world_walls=False, balls_per_escape=2,
                      color_scheme="Neon Mix")
@@ -296,80 +340,238 @@ class MenuScene:
         self.cam = Camera(app.screen.get_rect(), 0, 0, 1.0)
         self.renderer = Renderer()
         self.t = 0.0
+        self.worlds = []
+        self.thumbs = {}
+        self.sel = None
+        self.confirm_delete = 0.0
+        self.new_name = ""
+        self.new_theme = "Midnight"
+        self.new_level = "Classic"
+        self.world_list = ScrollList(pad=4, gap=8)
+        self.refresh_worlds()
         self.resize()
 
     def resize(self):
-        W, H = self.app.screen.get_size()
-        self.cam.viewport = pygame.Rect(0, 0, W, H)
+        W_, H = self.app.screen.get_size()
+        self.cam.viewport = pygame.Rect(0, 0, W_, H)
         self.cam.zoom = H / 700
         self.build()
 
-    def _play(self, preset=None, load=None):
+    # --- worlds ----------------------------------------------------------
+    def refresh_worlds(self):
+        self.worlds = W.list_worlds()
+        self.thumbs = {}
+        for m in self.worlds:
+            p = W.thumb_path(m["id"])
+            if p.exists():
+                try:
+                    self.thumbs[m["id"]] = pygame.image.load(str(p)).convert()
+                except (pygame.error, OSError):
+                    pass
+        ids = [m["id"] for m in self.worlds]
+        if self.sel not in ids:
+            self.sel = ids[0] if ids else None
+
+    def _meta(self):
+        return next((m for m in self.worlds if m["id"] == self.sel), None)
+
+    def _select(self, wid):
+        now = pygame.time.get_ticks()
+        if self.sel == wid and now - getattr(self, "_last_click", 0) < 400:
+            self._open(wid)  # double-click plays
+            return
+        self._last_click = now
+        self.sel = wid
+        self.confirm_delete = 0.0
+        self.build()
+
+    def _open(self, wid):
         scene = SandboxScene(self.app)
-        if load:
-            scene.load_file(load)
-        else:
-            (preset or PRESETS[0][2])(scene.world)
+        if scene.open_world(wid):
+            self.app.set_scene(scene)
+
+    def _quick_play(self, preset):
+        scene = SandboxScene(self.app)
+        preset(scene.world)
         scene.fit_camera()
         self.app.set_scene(scene)
 
+    def _create(self):
+        name = (self.new_name or "").strip() or f"World {len(self.worlds) + 1}"
+        fn = next(p[2] for p in PRESETS if p[0] == self.new_level)
+        scene = SandboxScene(self.app)
+        scene.create_world(name, self.new_theme, fn)
+        self.app.set_scene(scene)
+
+    def _delete(self):
+        if self.sel is None:
+            return
+        if self.confirm_delete <= 0:
+            self.confirm_delete = 3.0
+            return
+        W.delete_world(self.sel)
+        self.confirm_delete = 0.0
+        self.sel = None
+        self.refresh_worlds()
+        self.build()
+
+    def _duplicate(self):
+        if self.sel:
+            self.sel = W.duplicate_world(self.sel) or self.sel
+            self.refresh_worlds()
+            self.build()
+
+    def _rename(self, name):
+        if self.sel:
+            W.rename_world(self.sel, name)
+            self.refresh_worlds()
+            self.build()
+
+    def _start_create(self):
+        self.new_name = f"World {len(self.worlds) + 1}"
+        self.new_theme = "Midnight"
+        self.new_level = "Classic"
+        self._mode("create")
+
+    def _panel_rect(self):
+        W_, H = self.app.screen.get_size()
+        w = min(1120, W_ - 60)
+        top = int(H * 0.17)
+        return pygame.Rect(W_ // 2 - w // 2, top, w, H - top - 30)
+
     def build(self):
-        W, H = self.app.screen.get_size()
+        W_, H = self.app.screen.get_size()
         self.widgets = []
         if self.mode == "main":
             bw = 300
-            x = W // 2 - bw // 2
-            y = int(H * 0.46)
-            items = [Button("PLAY", lambda: self._play(), color=ACCENT, height=48, size=18)]
-            if (SAVE_DIR / "autosave.json").exists():
-                items.append(Button("CONTINUE", lambda: self._play(load=SAVE_DIR / "autosave.json"),
-                                    color=(60, 200, 255), height=44, size=16))
+            x = W_ // 2 - bw // 2
+            y = int(H * 0.44)
+            items = [Button("PLAY", lambda: self._mode("worlds") if self.worlds else self._start_create(),
+                            color=ACCENT, height=48, size=18, tip="Pick one of your worlds or make a new one")]
+            if self.worlds:
+                last = self.worlds[0]
+                items.append(Button(f"CONTINUE: {last['name'][:18].upper()}", lambda: self._open(last["id"]),
+                                    color=(60, 200, 255), height=42, size=15,
+                                    tip="Jump straight back into your last world"))
             items += [
-                Button("CHOOSE LEVEL", lambda: self._mode("levels"), color=ACCENT2, height=44, size=16),
-                Button("SETTINGS", self.app.open_settings, height=44, size=16),
-                Button("HOW TO PLAY", lambda: self._mode("help"), height=44, size=16),
-                Button(lambda: "SOUND: ON" if self.app.settings.sound else "SOUND: OFF",
-                       self._toggle_sound, height=38),
+                Button("QUICK PLAY", lambda: self._mode("levels"), color=ACCENT2, height=42, size=16,
+                       tip="Try a level without making a world (not saved)"),
+                Button("SETTINGS", self.app.open_settings, height=42, size=16),
+                Button("HOW TO PLAY", lambda: self._mode("help"), height=42, size=16),
                 Button("QUIT", self.app.quit, height=38, color=(70, 30, 45), text_color=TEXT),
             ]
             for it in items:
                 y += it.layout(x, y, bw) + 12
                 self.widgets.append(it)
+        elif self.mode == "worlds":
+            r = self._panel_rect()
+            lw = int(r.w * 0.56)
+            cards = [WorldCard(m, self.thumbs.get(m["id"]), lambda wid=m["id"]: self._select(wid),
+                               lambda wid=m["id"]: self.sel == wid) for m in self.worlds]
+            self.world_list.set(cards, keep_scroll=True)
+            self.world_list.layout(pygame.Rect(r.x + 16, r.y + 60, lw, r.h - 130))
+            new = Button("+  CREATE NEW WORLD", self._start_create, color=ACCENT, height=44, size=15)
+            new.layout(r.x + 16, r.bottom - 60, lw // 2 - 6)
+            back = Button("BACK", lambda: self._mode("main"), height=44)
+            back.layout(r.x + 16 + lw // 2 + 6, r.bottom - 60, lw // 2 - 6)
+            self.widgets += [self.world_list, new, back]
+            meta = self._meta()
+            if meta:
+                dx = r.x + lw + 36
+                dw = r.right - dx - 18
+                self.detail_x, self.detail_w = dx, dw
+                th_h = int(dw * 0.6)
+                name = TextInput(lambda: meta["name"], self._rename, "World name", 28,
+                                 tip="Click to rename, press Enter to save")
+                name.layout(dx, r.y + 60 + th_h + 14, dw)
+                play = Button("PLAY", lambda: self._open(meta["id"]), color=ACCENT, height=48, size=18)
+                play.layout(dx, r.bottom - 116, dw)
+                dup = Button("DUPLICATE", self._duplicate, height=40)
+                dup.layout(dx, r.bottom - 60, dw // 2 - 6)
+                dele = Button(lambda: "CLICK AGAIN TO DELETE" if self.confirm_delete > 0 else "DELETE",
+                              self._delete, color=lambda: DANGER if self.confirm_delete > 0 else (90, 30, 45),
+                              text_color=TEXT, height=40, size=lambda: 12 if self.confirm_delete > 0 else 14)
+                dele.layout(dx + dw // 2 + 6, r.bottom - 60, dw - dw // 2 - 6)
+                self.widgets += [name, play, dup, dele]
+        elif self.mode == "create":
+            r = self._panel_rect()
+            x, w = r.x + 24, r.w - 48
+            name = TextInput(lambda: self.new_name, lambda v: setattr(self, "new_name", v), "World name", 28,
+                             live=True)
+            name.layout(x, r.y + 84, min(460, w))
+            self.widgets.append(name)
+            cols = 4
+            gap = 12
+            cw = (w - gap * (cols - 1)) // cols
+            y0 = r.y + 160
+            for i, tname in enumerate(THEME_ORDER):
+                card = ThemeCard(tname, lambda t=tname: setattr(self, "new_theme", t),
+                                 lambda t=tname: self.new_theme == t, lambda: self.t)
+                card.layout(x + (i % cols) * (cw + gap), y0 + (i // cols) * (card.height + gap), cw)
+                self.widgets.append(card)
+            rows = (len(THEME_ORDER) + cols - 1) // cols
+            y = y0 + rows * (ThemeCard.height + gap) + 34
+            lvl = Choice("Starting level", [p[0] for p in PRESETS], lambda: self.new_level,
+                         lambda v: setattr(self, "new_level", v),
+                         tip="What the world starts with. You can change everything later.")
+            lvl.layout(x, y, min(560, w))
+            self.widgets.append(lvl)
+            self.level_desc_y = y + 40
+            create = Button("CREATE WORLD", self._create, color=ACCENT, height=46, size=16)
+            create.layout(r.right - 24 - 220, r.bottom - 66, 220)
+            cancel = Button("CANCEL", lambda: self._mode("worlds" if self.worlds else "main"), height=46)
+            cancel.layout(r.right - 24 - 220 - 12 - 160, r.bottom - 66, 160)
+            self.widgets += [create, cancel]
+            if self.ui.focus is None:
+                name.focus(self.ui)
         elif self.mode == "levels":
             cols = 3
-            cw, gap = min(320, (W - 120) // cols), 14
+            cw, gap = min(320, (W_ - 120) // cols), 14
             total_w = cols * cw + (cols - 1) * gap
-            x0 = W // 2 - total_w // 2
+            x0 = W_ // 2 - total_w // 2
             y0 = int(H * 0.24)
             for i, (name, desc, fn) in enumerate(PRESETS):
-                card = PresetCard(name, desc, lambda fn=fn: self._play(fn))
+                card = PresetCard(name, desc, lambda fn=fn: self._quick_play(fn))
                 card.layout(x0 + (i % cols) * (cw + gap), y0 + (i // cols) * (74 + gap), cw)
                 self.widgets.append(card)
             back = Button("BACK", lambda: self._mode("main"), height=40)
             rows = (len(PRESETS) + cols - 1) // cols
-            back.layout(W // 2 - 100, y0 + rows * (74 + gap) + 20, 200)
+            back.layout(W_ // 2 - 100, y0 + rows * (74 + gap) + 20, 200)
             self.widgets.append(back)
         else:
             back = Button("BACK", lambda: self._mode("main"), height=40)
-            back.layout(W // 2 - 100, H - 80, 200)
+            back.layout(W_ // 2 - 100, H - 80, 200)
             self.widgets.append(back)
 
     def _mode(self, m):
+        if self.ui.focus:
+            self.ui.focus = None
         self.mode = m
+        if m in ("worlds", "main"):
+            self.refresh_worlds()
         self.build()
-
-    def _toggle_sound(self):
-        self.app.settings.sound = not self.app.settings.sound
 
     def event(self, e):
         if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
-            if self.mode != "main":
+            if self.mode == "create":
+                self._mode("worlds" if self.worlds else "main")
+            elif self.mode != "main":
                 self._mode("main")
             else:
                 self.app.quit()
             return
-        if e.type == pygame.KEYDOWN and e.key in (pygame.K_RETURN, pygame.K_SPACE) and self.mode == "main":
-            self._play()
+        if e.type == pygame.KEYDOWN and e.key == pygame.K_RETURN:
+            if self.mode == "create":
+                self._create()
+                return
+            if self.mode == "worlds" and self.sel:
+                self._open(self.sel)
+                return
+            if self.mode == "main":
+                self.widgets[0].on_click()
+                return
+        if e.type == pygame.KEYDOWN and e.key == pygame.K_DELETE and self.mode == "worlds":
+            self._delete()
             return
         for w in self.widgets:
             if w.event(e, self.ui):
@@ -377,56 +579,120 @@ class MenuScene:
 
     def update(self, frames, dt):
         self.t += frames
+        if self.confirm_delete > 0:
+            self.confirm_delete = max(0.0, self.confirm_delete - dt)
         self.demo.update(frames)
         if len(self.demo.balls) < 3:
             self.demo.spawn_center(3)
+        if self.mode == "worlds":
+            self.world_list.layout(self.world_list.rect)
 
     def draw(self, surf):
-        W, H = surf.get_size()
+        W_, H = surf.get_size()
+        ui = self.ui
         self.cam.y = 40 / self.cam.zoom
         self.renderer.draw(surf, self.demo, self.cam)
-        shade = pygame.Surface((W, H), pygame.SRCALPHA)
-        shade.fill((8, 8, 14, 150 if self.mode == "main" else 205))
+        shade = pygame.Surface((W_, H), pygame.SRCALPHA)
+        shade.fill((8, 8, 14, 150 if self.mode == "main" else 215))
         surf.blit(shade, (0, 0))
-        title_y = int(H * (0.25 if self.mode == "main" else 0.1))
+        small = self.mode in ("worlds", "create")
+        title_y = int(H * (0.25 if self.mode == "main" else (0.08 if small else 0.1)))
+        size = 64 if not small else 44
         bob = math.sin(self.t * 0.04) * 4
         for i, col in enumerate(((0, 90, 75), (0, 160, 130))):
-            self.ui.text(surf, "FUN BALL GAME", (W // 2 + 3 - i * 2, title_y + bob + 3 - i * 2), 64, col, True, "center")
-        self.ui.text(surf, "FUN BALL GAME", (W // 2, title_y + bob), 64, ACCENT, True, "center")
+            ui.text(surf, "FUN BALL GAME", (W_ // 2 + 3 - i * 2, title_y + bob + 3 - i * 2), size, col, True, "center")
+        ui.text(surf, "FUN BALL GAME", (W_ // 2, title_y + bob), size, ACCENT, True, "center")
         if self.mode == "main":
-            self.ui.text(surf, "v4  -  Pygame Sandbox Edition", (W // 2, title_y + 52), 18, ACCENT2, True, "center")
+            ui.text(surf, "v4.2  -  Pygame Sandbox Edition", (W_ // 2, title_y + 52), 18, ACCENT2, True, "center")
             n_blocks = sum(len(v) for v in B.CATEGORIES.values())
-            self.ui.text(surf, f"{n_blocks} blocks & items  -  {len(BALL_TYPES)} ball types  -  "
-                         f"{len(PRESETS)} levels  -  {len(ACHIEVEMENTS)} achievements",
-                         (W // 2, title_y + 80), 14, TEXT_DIM, False, "center")
+            ui.text(surf, f"{n_blocks} blocks & items  -  {len(BALL_TYPES)} ball types  -  "
+                    f"{len(THEMES)} world themes  -  {len(PRESETS)} levels",
+                    (W_ // 2, title_y + 80), 14, TEXT_DIM, False, "center")
             got = len(self.app.achievements.unlocked)
-            self.ui.text(surf, f"Achievements: {got}/{len(ACHIEVEMENTS)}", (W // 2, H - 30), 14,
-                         WARN, False, "center")
+            ui.text(surf, f"Achievements: {got}/{len(ACHIEVEMENTS)}", (W_ // 2, H - 30), 14,
+                    WARN, False, "center")
+        elif self.mode == "worlds":
+            r = self._panel_rect()
+            panel(surf, r, (16, 16, 26))
+            ui.text(surf, "YOUR WORLDS", (r.x + 18, r.y + 18), 22, ACCENT, True)
+            ui.text(surf, f"{len(self.worlds)} saved", (r.x + 200, r.y + 25), 13, TEXT_DIM)
+            if not self.worlds:
+                ui.text(surf, "No worlds yet. Make one!", self.world_list.rect.center, 18, TEXT_DIM, True, "center")
+            meta = self._meta()
+            if meta:
+                dx, dw = self.detail_x, self.detail_w
+                tr = pygame.Rect(dx, r.y + 60, dw, int(dw * 0.6))
+                thumb = self.thumbs.get(meta["id"])
+                if thumb:
+                    surf.blit(pygame.transform.smoothscale(thumb, tr.size), tr)
+                else:
+                    theme_swatch(surf, tr, meta.get("theme", "Midnight"), self.t)
+                pygame.draw.rect(surf, BORDER, tr, 1)
+                y = tr.bottom + 66
+                th = theme(meta.get("theme", "Midnight"))
+                rows = [("Theme", f"{meta.get('theme', 'Midnight')} - {th['desc']}"),
+                        ("Created", W.fmt_time(meta.get("created"))),
+                        ("Last played", W.fmt_time(meta.get("last_played"))),
+                        ("Play time", W.fmt_playtime(meta.get("playtime", 0))),
+                        ("Stuff", f"{meta['blocks']} blocks, {meta['coins']} coins, {meta['escapes']} escapes")]
+                for k, v in rows:
+                    ui.text(surf, k, (dx, y), 13, TEXT_DIM, True)
+                    for i, line in enumerate(wrap(ui.font(13), v, dw - 100)[:2]):
+                        ui.text(surf, line, (dx + 100, y + i * 16), 13, TEXT)
+                    y += 22 if len(wrap(ui.font(13), v, dw - 100)) < 2 else 36
+        elif self.mode == "create":
+            r = self._panel_rect()
+            panel(surf, r, (16, 16, 26))
+            ui.text(surf, "CREATE A NEW WORLD", (r.x + 24, r.y + 20), 22, ACCENT, True)
+            ui.text(surf, "Name", (r.x + 24, r.y + 62), 13, TEXT_DIM, True)
+            ui.text(surf, "Theme", (r.x + 24, r.y + 138), 13, TEXT_DIM, True)
+            desc = next(p[1] for p in PRESETS if p[0] == self.new_level)
+            ui.text(surf, desc, (r.x + 24, self.level_desc_y), 13, TEXT_DIM)
         elif self.mode == "levels":
-            self.ui.text(surf, "Choose a level", (W // 2, title_y + 60), 22, TEXT, True, "center")
+            ui.text(surf, "Quick play  -  pick a level (not saved as a world)", (W_ // 2, title_y + 60),
+                    20, TEXT, True, "center")
         else:
-            r = pygame.Rect(W // 2 - 380, int(H * 0.18), 760, int(H * 0.68))
+            r = pygame.Rect(W_ // 2 - 380, int(H * 0.18), 760, int(H * 0.68))
             panel(surf, r, (16, 16, 26))
             y = r.y + 18
             intro = ("Balls bounce inside spinning rings. When one escapes through a gap, more balls "
-                     "spawn in the middle. Build machines out of walls, bumpers, portals, black holes, "
-                     "cannons, TNT and more using the toolbox on the left. Tweak everything in the panel "
-                     "on the right.")
-            for line in wrap(self.ui.font(15), intro, r.w - 40):
-                self.ui.text(surf, line, (r.x + 20, y), 15, TEXT)
+                     "spawn in the middle. Make a world, then build machines out of walls, bumpers, portals, "
+                     "black holes, cannons, TNT and more using the toolbox on the left. Your worlds save "
+                     "automatically.")
+            for line in wrap(ui.font(15), intro, r.w - 40):
+                ui.text(surf, line, (r.x + 20, y), 15, TEXT)
                 y += 20
             y += 10
             for key, desc in HELP_LINES:
                 if desc is None:
                     y += 6
-                    self.ui.text(surf, key, (r.x + 20, y), 14, ACCENT, True)
+                    ui.text(surf, key, (r.x + 20, y), 14, ACCENT, True)
                 else:
-                    self.ui.text(surf, key, (r.x + 20, y), 14, WARN, True)
-                    self.ui.text(surf, desc, (r.x + 230, y), 14, TEXT)
+                    ui.text(surf, key, (r.x + 20, y), 14, WARN, True)
+                    ui.text(surf, desc, (r.x + 230, y), 14, TEXT)
                 y += 20
         for w in self.widgets:
-            w.hover(self.ui)
-            w.draw(surf, self.ui)
+            w.hover(ui)
+            w.draw(surf, ui)
+
+
+class ThemeCard(Button):
+    height = 118
+
+    def __init__(self, name, on_click, selected, clock):
+        super().__init__(name, on_click, height=ThemeCard.height, tip=theme(name)["desc"])
+        self.selected, self.clock = selected, clock
+
+    def draw(self, surf, ui):
+        sel = self.selected()
+        hov = self.rect.collidepoint(ui.mouse)
+        sw = pygame.Rect(self.rect.x + 6, self.rect.y + 6, self.rect.w - 12, self.rect.h - 36)
+        pygame.draw.rect(surf, (38, 38, 62) if sel else PANEL_LIGHT, self.rect, border_radius=10)
+        theme_swatch(surf, sw, self.text, self.clock())
+        pygame.draw.rect(surf, ACCENT if sel else (mix(BORDER, ACCENT, 0.5) if hov else BORDER), self.rect,
+                         3 if sel else 1, border_radius=10)
+        ui.text(surf, self.text, (self.rect.centerx, self.rect.bottom - 16), 14, ACCENT if sel else TEXT,
+                True, "center")
 
 
 # ==========================================================================
@@ -465,7 +731,9 @@ class SandboxScene:
         self._inspected = None
         self.left_list = ScrollList()
         self.right_list = ScrollList()
-        self.coins_saved = 0
+        self.world_id = None   # None = quick play (not saved as a world)
+        self.meta = None
+        self.autosave_timer = 0.0
         self.resize()
 
     # ------------------------------------------------------------------
@@ -642,6 +910,13 @@ class SandboxScene:
         s = self.s
         wd = []
         if tab == "World":
+            if self.world_id:
+                wd += [Header("This world", ACCENT2),
+                       TextInput(lambda: self.meta["name"], self.rename_world, "World name", 28,
+                                 tip="Click to rename this world, Enter to save"),
+                       Choice("Theme", THEME_ORDER, lambda: s.theme, lambda v: setattr(s, "theme", v),
+                              tip="Changes how the world looks."),
+                       Button("Save world now (Ctrl+S)", lambda: self.save_world(quiet=False), height=28)]
             wd += [
                 Header("Arena"),
                 self._slider("Rings", "ring_count", 0, 6, 1, "How many spinning rings. 0 = free sandbox.", True),
@@ -678,6 +953,8 @@ class SandboxScene:
                 self._slider("World width", "world_width", 600, 8000, 100),
                 self._slider("World height", "world_height", 400, 6000, 100),
                 Header("Levels"),
+                Label("Loading a level replaces what's in this world." if self.world_id else
+                      "Quick play: this isn't saved as a world.", 13),
             ]
             for name, desc, fn in PRESETS:
                 wd.append(Button(name, lambda fn=fn: self.load_preset(fn), tip=desc, height=28))
@@ -712,6 +989,8 @@ class SandboxScene:
         elif tab == "Visual":
             wd += [
                 Header("Look"),
+                Choice("World theme", THEME_ORDER, lambda: s.theme, lambda v: setattr(s, "theme", v),
+                       tip=lambda: theme(s.theme)["desc"]),
                 Choice("Colour scheme", list(COLOR_SCHEMES), lambda: s.color_scheme,
                        lambda v: setattr(s, "color_scheme", v)),
                 Button("Recolour all balls", self.recolor, height=28),
@@ -881,9 +1160,10 @@ class SandboxScene:
         self.toast("Settings reset")
 
     def load_preset(self, fn):
-        snd, vol = self.s.sound, self.s.volume
+        th = self.s.theme
         fn(self.world)
-        self.s.sound, self.s.volume = snd, vol
+        if self.world_id:
+            self.s.theme = th  # a world keeps its theme when you load a level into it
         self.select(None)
         self.undo_stack.clear()
         self.fit_camera()
@@ -918,9 +1198,76 @@ class SandboxScene:
         self.resize()
 
     def autosave(self):
-        if not self.s.autosave:
-            return
-        self.save_file(SAVE_DIR / "autosave.json", quiet=True)
+        """Called when leaving: worlds always save, quick-play sessions don't."""
+        if self.world_id:
+            self.save_world()
+
+    # ------------------------------------------------------------------
+    # worlds
+    # ------------------------------------------------------------------
+    def create_world(self, name, theme_name, preset):
+        preset(self.world)
+        self.s.theme = theme_name
+        for k, v in theme(theme_name)["physics"].items():
+            setattr(self.s, k, v)
+        self.world.rings = []
+        self.world.rebuild_rings()
+        self.world_id = W.new_id(name)
+        self.meta = W.make_meta(name, theme_name)
+        self.fit_camera()
+        self.resize()
+        self.save_world(thumb=False)
+        self.toast(f"Created world: {name}")
+
+    def open_world(self, wid):
+        data = W.load_world(wid)
+        if not data:
+            return False
+        self.world.load_dict(data)
+        self.world.coins = data.get("coins", 0)
+        for k, v in data.get("stats", {}).items():
+            if k in self.world.stats:
+                self.world.stats[k] = v
+        if not self.world.balls and self.world.rings:
+            self.world.spawn_center(1)
+        self.world_id = wid
+        self.meta = dict(data.get("meta") or W.make_meta("World", self.s.theme))
+        cam = data.get("camera")
+        if cam:
+            self.cam.x, self.cam.y, self.cam.zoom = cam
+        else:
+            self.fit_camera()
+        self.resize()
+        self.toast(f"Welcome back to {self.meta['name']}")
+        return True
+
+    def save_world(self, thumb=True, quiet=True):
+        if not self.world_id:
+            return False
+        self.meta["last_played"] = time.time()
+        self.meta["theme"] = self.s.theme
+        data = self.world.to_dict(balls=True)
+        data["coins"] = self.world.coins
+        data["camera"] = [self.cam.x, self.cam.y, self.cam.zoom]
+        data["stats"] = dict(self.world.stats)
+        data["meta"] = self.meta
+        ok = W.save_world(self.world_id, data)
+        if thumb and self.app.overlay is None and not self.show_help:
+            try:
+                shot = self.app.screen.subsurface(self.cam.viewport.clip(self.app.screen.get_rect())).copy()
+                pygame.image.save(pygame.transform.smoothscale(shot, (320, 200)),
+                                  str(W.thumb_path(self.world_id)))
+            except (pygame.error, ValueError, OSError):
+                pass
+        self.autosave_timer = 0.0
+        if not quiet:
+            self.toast("World saved" if ok else "Could not save the world!", ACCENT if ok else DANGER)
+        return ok
+
+    def rename_world(self, name):
+        if self.meta:
+            self.meta["name"] = name
+            self.save_world(thumb=False)
 
     def to_menu(self):
         self.autosave()
@@ -1043,7 +1390,10 @@ class SandboxScene:
         elif ctrl and k == pygame.K_z:
             self.undo()
         elif ctrl and k == pygame.K_s:
-            self.save_file(SAVE_DIR / "slot1.json")
+            if self.world_id:
+                self.save_world(quiet=False)
+            else:
+                self.save_file(SAVE_DIR / "slot1.json")
         elif ctrl and k == pygame.K_l:
             self.load_file(SAVE_DIR / "slot1.json")
         elif ctrl and k == pygame.K_d:
@@ -1213,6 +1563,11 @@ class SandboxScene:
     def update(self, frames, dt):
         if dt > 0:
             self.fps = self.fps * 0.95 + (1.0 / dt) * 0.05
+        if self.world_id:
+            self.meta["playtime"] = self.meta.get("playtime", 0.0) + dt
+            self.autosave_timer += dt
+            if self.s.autosave and self.autosave_timer > 120:
+                self.save_world()
         w = self.world
         mx, my = pygame.mouse.get_pos()
         if not self.over_ui((mx, my)) or self.lmb or self.rmb:
@@ -1381,7 +1736,11 @@ class SandboxScene:
         pygame.draw.rect(surf, (14, 14, 24), self.top_rect)
         pygame.draw.line(surf, BORDER, (0, TOP_H - 1), (W, TOP_H - 1))
         ui.text(surf, "FUN BALL GAME", (16, 9), 20, ACCENT, True)
-        ui.text(surf, "v4 sandbox", (18, 33), 11, TEXT_DIM)
+        sub = self.meta["name"] if self.meta else "quick play (not saved)"
+        f11 = ui.font(11)
+        while f11.size(sub)[0] > 160 and len(sub) > 4:
+            sub = sub[:-2]
+        ui.text(surf, sub, (18, 33), 11, ACCENT2 if self.meta else TEXT_DIM, True)
         x = 188
         limit = self.s.ball_limit()
         stats = [("BALLS" if not self.s.unlimited_balls else "BALLS (NO LIMIT)",
@@ -1569,8 +1928,8 @@ class SettingsOverlay:
                 self._slider("Free ball lifetime (s)", "escaped_lifetime", 0, 120, 1,
                              "Escaped balls disappear after this long. 0 = never."),
                 Header("Saving"),
-                self._toggle("Autosave when leaving", "autosave",
-                             "Saves your sandbox when you go back to the menu or quit."),
+                self._toggle("Autosave every 2 minutes", "autosave",
+                             "Worlds always save when you leave. This also saves them every 2 minutes."),
             ]
         else:
             wd = [

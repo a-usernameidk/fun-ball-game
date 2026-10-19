@@ -408,6 +408,7 @@ class World:
             for i in range(n):
                 b1 = cell[i]
                 x1, y1, r1 = b1.x, b1.y, b1.r
+                m1 = 1e9 if b1.grabbed or b1.frozen > 0 else b1.mass
                 for oi, other in enumerate(others):
                     for b2 in (other[i + 1:] if oi == 0 else other):
                         dx = b2.x - x1
@@ -418,7 +419,6 @@ class World:
                             continue
                         d = sqrt(d2)
                         nx, ny = dx / d, dy / d
-                        m1 = 1e9 if b1.grabbed or b1.frozen > 0 else b1.mass
                         m2 = 1e9 if b2.grabbed or b2.frozen > 0 else b2.mass
                         tot = m1 + m2
                         ov = rr - d
@@ -555,9 +555,14 @@ class World:
     # ------------------------------------------------------------------
     # saving
     # ------------------------------------------------------------------
-    def to_dict(self):
-        return {"version": 2, "settings": self.s.to_dict(),
-                "blocks": [b.to_dict() for b in self.blocks if b.alive]}
+    def to_dict(self, balls=False):
+        d = {"version": 3, "settings": self.s.to_dict(),
+             "blocks": [b.to_dict() for b in self.blocks if b.alive]}
+        if balls:
+            d["balls"] = [[round(b.x, 1), round(b.y, 1), round(b.vx, 2), round(b.vy, 2),
+                           round(b.r / BALL_TYPES[b.kind]["size"], 2), list(b.color), b.kind,
+                           b.layer, b.rewarded] for b in self.balls[-5000:] if b.alive]
+        return d
 
     def load_dict(self, data):
         self.s.load_dict(data.get("settings", {}), skip=PREF_FIELDS)
@@ -571,4 +576,13 @@ class World:
         self.rings = []
         self.rebuild_rings()
         self.paused = False
+        for row in data.get("balls", []):
+            try:
+                x, y, vx, vy, r, color, kind, layer, rewarded = row
+                b = Ball(x, y, vx, vy, r, tuple(color), kind if kind in BALL_TYPES else "normal",
+                         self.s.trail_length)
+                b.layer, b.rewarded = int(layer), bool(rewarded)
+                self.balls.append(b)
+            except (TypeError, ValueError):
+                continue
 

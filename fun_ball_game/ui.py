@@ -209,10 +209,10 @@ class Button(Widget):
         tc = self.text_color or ((15, 15, 25) if self.color and sum(base) > 450 else TEXT)
         if self.icon:
             self.icon(surf, pygame.Rect(self.rect.x + 6, self.rect.y + 4, self.rect.h - 8, self.rect.h - 8))
-            ui.text(surf, _val(self.text), (self.rect.x + self.rect.h + 4, self.rect.centery), self.size,
+            ui.text(surf, _val(self.text), (self.rect.x + self.rect.h + 4, self.rect.centery), _val(self.size),
                     tc, True, "midleft")
         else:
-            ui.text(surf, _val(self.text), self.rect.center, self.size, tc, True, "center")
+            ui.text(surf, _val(self.text), self.rect.center, _val(self.size), tc, True, "center")
 
 
 class Row(Widget):
@@ -514,6 +514,9 @@ class ScrollList:
             self.scroll = max_scroll
             self.layout(rect)
 
+    def hover(self, ui):
+        pass  # draw() handles hovering for the children
+
     def event(self, e, ui):
         if e.type == pygame.MOUSEBUTTONDOWN and e.button in (4, 5) and self.rect.collidepoint(e.pos):
             if not pygame.key.get_mods() & pygame.KMOD_SHIFT:
@@ -605,3 +608,62 @@ class NumberInput(Widget):
             v = self.get()
             txt = f"{int(v):,}" if self.integer else f"{v:g}"
         ui.text(surf, txt, (box.right - 10, box.centery), 14, ACCENT if editing else TEXT, True, "midright")
+
+
+class TextInput(Widget):
+    """Single-line text box. Click to type, Enter to confirm."""
+    height = 38
+
+    def __init__(self, get, set, placeholder="", max_len=28, tip=None, live=False):
+        super().__init__(tip)
+        self.get, self.set = get, set
+        self.placeholder, self.max_len = placeholder, max_len
+        self.live = live   # live=True: every keystroke updates the value
+        self.buf = None
+
+    def event(self, e, ui):
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.rect.collidepoint(e.pos):
+            self.focus(ui)
+            return True
+        return False
+
+    def focus(self, ui):
+        ui.focus = self
+        self.buf = self.get()
+
+    def key(self, e, ui):
+        if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
+            self.commit(ui)
+            return
+        if e.key == pygame.K_ESCAPE:
+            self.buf = None
+            ui.focus = None
+            return
+        if e.key == pygame.K_BACKSPACE:
+            self.buf = self.buf[:-1]
+        elif e.unicode and e.unicode.isprintable() and len(self.buf) < self.max_len:
+            self.buf += e.unicode
+        if self.live:
+            self.set(self.buf)
+
+    def commit(self, ui):
+        if self.buf is not None and self.buf.strip():
+            self.set(self.buf.strip())
+        self.buf = None
+        if ui.focus is self:
+            ui.focus = None
+
+    def draw(self, surf, ui):
+        editing = ui.focus is self
+        hov = self.rect.collidepoint(ui.mouse)
+        pygame.draw.rect(surf, (12, 12, 20), self.rect, border_radius=7)
+        pygame.draw.rect(surf, ACCENT if editing else (mix(BORDER, ACCENT, 0.5) if hov else BORDER),
+                         self.rect, 2 if editing else 1, border_radius=7)
+        text = self.buf if editing else self.get()
+        if editing and (pygame.time.get_ticks() // 400) % 2:
+            text += "|"
+        if text:
+            ui.text(surf, text, (self.rect.x + 12, self.rect.centery), 16, TEXT, True, "midleft")
+        else:
+            ui.text(surf, self.placeholder, (self.rect.x + 12, self.rect.centery), 15, TEXT_DIM, False,
+                    "midleft")

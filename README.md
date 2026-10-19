@@ -1,8 +1,8 @@
-# Fun Ball Game v4 – Pygame Sandbox Edition
+# Fun Ball Game v4.2 – Pygame Sandbox Edition
 
 A physics sandbox about balls escaping spinning rings. Every time a ball gets out
 through a gap, more balls spawn in the middle, so it snowballs fast. On top of that
-there's a full level editor with **45 blocks, fields and items**, **15 ball types**,
+there's a full level editor, **saved worlds** with 8 themes, and **45 blocks, fields and items**, **15 ball types**,
 **10 ready-made levels**, achievements, saving and a proper in-game UI.
 
 ![Sandbox](docs/screenshot.png)
@@ -22,6 +22,17 @@ You need **Python 3.8+**.
 Runs on Windows, macOS and Linux. Not supported on phones or tablets.
 
 ## What's in it
+
+**Worlds:** press PLAY to see all your worlds, Minecraft style. Create as many as you like,
+each with a name, a theme and a starting level. Everything in a world is saved: blocks,
+balls, settings, coins, stats and the camera. Worlds save when you leave, and every 2
+minutes while you play. You can also rename, duplicate or delete them, and each one gets
+a thumbnail. Use QUICK PLAY to try a level without making a world.
+
+**World themes:** Midnight, Deep Space, Moon, Ocean, Volcano, Forest, Neon City and
+Candy Land. Each has its own background (stars, bubbles, embers, fireflies or neon rain)
+and its own starting physics, e.g. low gravity on the Moon, drag in the Ocean and heavy
+gravity in the Volcano.
 
 **Tools:** Select/Move, Spawn Balls, Grab & Throw, Eraser, Explosion, Attract, Repel
 
@@ -70,7 +81,7 @@ ball type, portal channel, black hole strength, and so on).
 | Q / E | Rotate selected or ghost block |
 | Delete / Ctrl+D | Delete / duplicate selected block |
 | Ctrl+Z | Undo |
-| Ctrl+S / Ctrl+L | Quick save / load |
+| Ctrl+S / Ctrl+L | Save the world (or quick save in quick play) / quick load |
 | B / C | Spawn 10 balls / clear balls |
 | 1–9 | Pick a tile in the current toolbox tab |
 | + / - | Simulation speed |
@@ -80,7 +91,8 @@ ball type, portal channel, black hole strength, and so on).
 | O | Settings |
 | H | Help |
 
-Saves, autosave and achievements go in the `saves/` folder next to the game.
+Worlds (`saves/worlds/`), save slots, settings and achievements all go in the `saves/`
+folder next to the game. To back up a world, copy its `.json` file.
 
 ## Project layout
 
@@ -96,6 +108,7 @@ fun_ball_game/
   ui.py                  pygame widget toolkit (buttons, sliders, tabs...)
   particles.py, audio.py effects and generated sound (no asset files)
   presets.py             the built-in levels
+  worlds.py, storage.py  saved worlds and save files
   achievements.py        achievements
   settings.py            all settings and colour themes
 legacy/v3/               the original Tkinter version

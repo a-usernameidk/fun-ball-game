@@ -68,7 +68,7 @@ class Particles:
                 tk.append(t)
         self.texts = tk
 
-    def draw(self, surf, cam, font):
+    def draw(self, surf, cam, font, bg=BG):
         z = cam.zoom
         vx0, vy0, vx1, vy1 = cam.visible_rect()
         cx, cy = cam.x, cam.y
@@ -80,15 +80,15 @@ class Particles:
                 continue
             k = life / ml
             level = int(k * 8)
-            key = (color, level)
+            key = (color, level, bg)
             col = cache.get(key)
             if col is None:
                 if len(cache) > 5000:
                     cache.clear()
-                col = cache[key] = mix(BG, color, min(1.0, (level + 1) / 8 * 1.4))
+                col = cache[key] = mix(bg, color, min(1.0, (level + 1) / 8 * 1.4))
             circle(surf, col, ((x - cx) * z + ox, (y - cy) * z + oy),
                    max(1, int(size * z * (0.4 + 0.6 * k))))
         for x, y, text, color, life in self.texts:
             sx, sy = cam.w2s(x, y)
-            img = font.render(text, True, mix(BG, color, min(1.0, life / 30)))
+            img = font.render(text, True, mix(bg, color, min(1.0, life / 30)))
             surf.blit(img, img.get_rect(center=(int(sx), int(sy))))
