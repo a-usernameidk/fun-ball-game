@@ -182,15 +182,24 @@ class Renderer:
         z = cam.zoom
         circle = pygame.draw.circle
         glow = s.glow
-        if s.trails:
+        n_balls = len(world.balls)
+        # level of detail for huge swarms: full trails, then short trails, then none
+        if s.trails and n_balls <= s.detail_threshold * 4:
             # inline world->screen transform: this loop runs for every ball
             cx, cy = cam.x, cam.y
             ox, oy = cam.viewport.centerx, cam.viewport.centery
-            crowd = len(world.balls) > s.detail_threshold * 0.66
+            crowd = n_balls > s.detail_threshold * 0.66
+            short = n_balls > s.detail_threshold * 1.5
             lines = pygame.draw.lines
+            line = pygame.draw.line
             for b in world.balls:
                 h = b.history
                 if len(h) > 1 and vx0 - 50 < b.x < vx1 + 50 and vy0 - 50 < b.y < vy1 + 50:
+                    if short:
+                        x, y = h[len(h) // 2]
+                        line(surf, _dim(b.color, 0.4), ((x - cx) * z + ox, (y - cy) * z + oy),
+                             ((b.x - cx) * z + ox, (b.y - cy) * z + oy), max(1, int(b.r * z * 0.7)))
+                        continue
                     pts = [((x - cx) * z + ox, (y - cy) * z + oy) for x, y in h]
                     pts.append(((b.x - cx) * z + ox, (b.y - cy) * z + oy))
                     w = max(1, int(b.r * z * 0.7))
@@ -203,6 +212,7 @@ class Renderer:
         cx, cy = cam.x, cam.y
         ox, oy = cam.viewport.centerx, cam.viewport.centery
         big_crowd = len(world.balls) > s.detail_threshold
+        fill = surf.fill
         if big_crowd:
             glow = False  # level of detail: keep the frame rate up in huge swarms
         for b in world.balls:
@@ -211,8 +221,11 @@ class Renderer:
             sx, sy = (b.x - cx) * z + ox, (b.y - cy) * z + oy
             r = b.r * z
             ri = max(1, int(r))
-            if big_crowd and b.kind == "normal" and b.frozen <= 0:
-                circle(surf, b.color, (sx, sy), r)
+            if big_crowd and b.frozen <= 0 and (b.kind == "normal" or r < 2.5):
+                if r < 1.6:
+                    fill(b.color, (sx - 1, sy - 1, 2, 2))  # tiny on screen: a dot is enough
+                else:
+                    circle(surf, b.color, (sx, sy), r)
                 continue
             if glow and ri >= 2:
                 g = glow_surface(b.color, ri * 2 + 2)

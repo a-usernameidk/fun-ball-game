@@ -239,6 +239,13 @@ export class Sim {
     for (let i = 0; i < steps; i++) this.substep(dt, grid, i === steps - 1 || this.balls.length <= 500);
     this.perFrame(total);
     this.time += total;
+    // the room's ball cap can shrink (more rooms or players joined): trim down to it smoothly
+    const over = this.balls.length - this.limits.maxBalls;
+    if (over > 0) {
+      const n = Math.min(over, Math.max(50, Math.floor(this.balls.length * 0.05)));
+      this.balls.splice(0, n);
+      this.stats.shed += n;
+    }
     // load shedding
     this.overloaded = this.work > this.limits.workBudget;
     if (this.overloaded && this.balls.length) {

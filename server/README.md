@@ -27,13 +27,15 @@ Change them in the `[vars]` section of `wrangler.toml`.
 
 | Setting | Default | What it stops |
 |---|---|---|
-| `CLOUD_MAX_BALLS` | 2000 | huge ball counts in cloud rooms |
+| `CLOUD_MAX_BALLS` | 10000 | balls a cloud room gets when it's alone (shared out as more rooms start, and split when a room has many players) |
+| `CLOUD_POOL_BALLS` | 20000 | total balls shared by all cloud rooms at once |
+| `CLOUD_ENERGY_MINUTES` | 60 | each session's energy bar: about 1 hour of full mayhem, or about 4 hours of calm building; it drains with the live load |
+| `CLOUD_DAILY_HOURS` | 20 | cloud time per day; power is turned down after half, then the cloud rests until midnight UTC |
 | `CLOUD_MAX_BLOCKS` | 300 | giant block machines in cloud rooms |
 | `CLOUD_WORK_BUDGET` | 60000 | "lag machines": when a tick needs more collision checks than this, the room deletes its oldest balls and refuses new ones until it recovers |
 | `CLOUD_MAX_SUBSTEPS` | 3 | cranking physics accuracy to burn CPU |
-| `CLOUD_SESSION_MINUTES` | 20 | cloud rooms running forever (players can restart them) |
 | `CLOUD_MAX_ROOMS` | 5 | too many cloud rooms at once, server-wide |
-| `SPAWN_RATE` | 500 | spawning more balls than this per second per player |
+| `SPAWN_RATE` | 2000 | spawning more balls than this per second per player |
 | `MSG_RATE` | 60 | message spam (per player, per second) |
 | `ROOM_MAX_PLAYERS` | 8 | crowded rooms |
 | `UPLOADS_PER_HOUR` | 10 | level upload spam (per player) |

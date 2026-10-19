@@ -23,14 +23,18 @@ new_sqlite_classes = ["Room", "Limiter"]
 [vars]
 ROOM_MAX_PLAYERS = "8"        # players per room
 MSG_RATE = "60"               # messages per second per player
-SPAWN_RATE = "500"            # balls a player may spawn per second (cloud rooms)
+SPAWN_RATE = "2000"           # balls a player may spawn per second (cloud rooms)
 MAX_MSG_KB = "1024"           # biggest single message (world snapshots when joining)
-CLOUD_MAX_BALLS = "2000"      # balls a cloud room can simulate
-CLOUD_MAX_SEND_BALLS = "2000" # balls streamed to players per snapshot
+CLOUD_MAX_BALLS = "10000"     # balls a cloud room gets when it's alone on a quiet day
+CLOUD_MIN_BALLS = "1000"      # a cloud room never gets fewer than this
+CLOUD_POOL_BALLS = "20000"    # shared by all cloud rooms running at the same time
+CLOUD_ROOM_KBPS = "6000"      # ball data a room may stream (all its players combined), KB/s
+CLOUD_DAILY_HOURS = "20"      # cloud-room hours per day before it rests until midnight UTC (0 = no limit)
+CLOUD_MAX_SEND_BALLS = "10000" # balls streamed to players per snapshot
 CLOUD_MAX_BLOCKS = "300"      # blocks a cloud room will simulate
 CLOUD_MAX_SUBSTEPS = "3"      # physics accuracy cap
 CLOUD_WORK_BUDGET = "60000"   # collision checks per tick before the room sheds balls
-CLOUD_SESSION_MINUTES = "20"  # a cloud session stops after this long (players can restart it)
+CLOUD_ENERGY_MINUTES = "60"   # cloud energy bar: minutes of full mayhem (about 4x longer when calm)
 CLOUD_MAX_ROOMS = "5"         # cloud rooms allowed to run at the same time, server-wide
 UPLOADS_PER_HOUR = "10"       # level uploads per player per hour
 MAX_LEVEL_KB = "400"          # biggest level upload
