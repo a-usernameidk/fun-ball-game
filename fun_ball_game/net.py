@@ -25,6 +25,8 @@ except ImportError:  # multiplayer is optional
     websocket = None
 
 USER_AGENT = "FunBallGame/4.3"
+# One click: Cloudflare copies the server into your GitHub, makes the database and deploys it.
+DEPLOY_URL = "https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server"
 _results = queue.Queue()
 
 

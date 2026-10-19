@@ -594,7 +594,8 @@ class MenuScene:
             return
         if not api.configured:
             self.online_levels = []
-            self.online_status = "No server set yet. Add your Cloudflare Worker address in Settings > Online."
+            self.online_status = ("No server yet. Open SETTINGS > Online and click \"Get a free server\" "
+                                  "(or paste a friend's server address).")
             return
         self.online_status = "Loading levels..."
 
@@ -2352,6 +2353,14 @@ class SettingsOverlay:
         g, st = self._bind(attr)
         return Toggle(label, g, st, tip)
 
+    def _deploy(self):
+        import webbrowser
+        try:
+            webbrowser.open(N.DEPLOY_URL)
+            self.test_status, self.test_color = "Opened Cloudflare in your browser.", TEXT_DIM
+        except Exception:
+            self.test_status, self.test_color = "Open this in your browser: " + N.DEPLOY_URL, WARN
+
     def _test(self):
         self.test_status, self.test_color = "Testing...", TEXT_DIM
 
@@ -2444,8 +2453,11 @@ class SettingsOverlay:
         elif self.tab == "Online":
             wd = [
                 Header("Server"),
-                Label("Online levels, multiplayer and cloud physics use your own Cloudflare Worker. "
-                      "Set one up with the steps in server/README.md, then paste its address here.", 13),
+                Label("Online levels, multiplayer and cloud physics need a server. You can get your own "
+                      "free one on Cloudflare in about a minute: click below, log in, press Deploy, then "
+                      "paste the address it gives you here. Friends just paste the same address.", 13),
+                Button("Get a free server (opens Cloudflare)", self._deploy, color=(246, 130, 31), height=34,
+                       text_color=(20, 20, 30)),
                 TextInput(lambda: s.server_url, lambda v: setattr(s, "server_url", v.strip()),
                           "https://fun-ball-game.yourname.workers.dev", 120,
                           tip="Click, paste or type the address, press Enter"),

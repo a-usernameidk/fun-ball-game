@@ -5,11 +5,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:local": "wrangler d1 execute fun-ball-game --local --file=schema.sql",
-    "db:remote": "wrangler d1 execute fun-ball-game --remote --file=schema.sql",
-    "test:sim": "node test/sim.test.js"
+    "test": "node test/sim.test.js"
   },
   "devDependencies": {
-    "wrangler": "^3.114.0"
-  }
+    "wrangler": "^4.40.0"
+  },
+  "description": "Online levels, multiplayer rooms and cloud physics for Fun Ball Game"
 }

@@ -1,13 +1,12 @@
-# Fun Ball Game server. See README.md in this folder for setup steps.
+# Fun Ball Game server. Easiest setup: the "Deploy to Cloudflare" button in README.md.
 name = "fun-ball-game"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 
+# The database is created for you on first deploy (no ID needed).
 [[d1_databases]]
 binding = "DB"
 database_name = "fun-ball-game"
-# Paste the database_id that `npx wrangler d1 create fun-ball-game` prints:
-database_id = "00000000-0000-0000-0000-000000000000"
 
 [durable_objects]
 bindings = [

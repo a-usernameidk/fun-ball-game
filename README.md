@@ -29,8 +29,14 @@ balls, settings, coins, stats and the camera. Worlds save when you leave, and ev
 minutes while you play. You can also rename, duplicate or delete them, and each one gets
 a thumbnail. Use QUICK PLAY to try a level without making a world.
 
-**Online (v4.3):** host your own server on Cloudflare Workers (steps in
-[server/README.md](server/README.md)) and paste its address into Settings > Online. Then:
+**Online (v4.3):** you need a server for this, and you can get your own for free in about a minute:
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server)
+
+Click the button, log in to Cloudflare (it's free) and press **Deploy**. When it's done, copy
+the address it shows (like `https://fun-ball-game.yourname.workers.dev`), then paste it into
+the game under **Settings > Online**. Your friends paste the same address. The same button is
+in the game too. Then:
 - **Online levels:** share any world as a level, and browse, search, like and download other people's.
 - **Multiplayer:** host a room from a world's Online tab and give friends the 5-letter code.
   You all build in the same world: blocks, settings, spawns and explosions sync live, and

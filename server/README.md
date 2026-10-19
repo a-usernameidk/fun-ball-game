@@ -2,41 +2,31 @@
 
 This one Worker powers everything online in the game:
 
-- **Online levels**: players upload, browse, search, like and download levels (stored in D1).
-- **Multiplayer rooms**: build together in one world with a 5-letter room code (Durable Objects + WebSockets).
+- **Online levels**: players upload, browse, search, like and download levels.
+- **Multiplayer rooms**: build together in one world with a 5-letter room code.
 - **Cloud physics**: the server runs a room's simulation so players' computers only draw it.
 
-## Set it up (about 5 minutes)
+## Set it up: one click
 
-You need a free [Cloudflare account](https://dash.cloudflare.com/sign-up) and [Node.js](https://nodejs.org).
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/a-usernameidk/fun-ball-game/tree/main/server)
 
-```bash
-cd server
-npm install
-npx wrangler login                       # opens your browser once
-npx wrangler d1 create fun-ball-game     # prints a database_id
-```
+1. Click the button. You can also use **Settings > Online > Get a free server** in the game.
+2. Log in to Cloudflare or make a free account, and connect GitHub when it asks.
+3. Press **Deploy**. Cloudflare copies this folder into your GitHub, creates the database
+   and puts the server online. The server creates its own tables on the first visit, so
+   there's nothing else to set up.
+4. Copy the address it gives you, e.g. `https://fun-ball-game.yourname.workers.dev`, and paste
+   it into the game under **Settings > Online**, then click **Test connection**.
 
-Paste the `database_id` it prints into `wrangler.toml`, then:
+Share that address with your friends so you all use the same server.
 
-```bash
-npm run db:remote                        # creates the tables
-npx wrangler deploy                      # prints your URL, e.g. https://fun-ball-game.yourname.workers.dev
-```
-
-In the game, open **Settings > Online**, paste that URL and press **Test connection**.
-Share the URL with your friends so they can use the same server.
-
-Optional: set a private salt for hashing player IPs (used for rate limits and likes):
-
-```bash
-npx wrangler secret put SALT
-```
+**Updating later:** the deploy connects your copy to Cloudflare, so every change pushed to it
+redeploys by itself. To change a limit, edit `wrangler.toml` on GitHub's website and commit.
 
 ## Limits (anti-abuse)
 
 All limits are enforced on the server, so a modified game can't get around them.
-Change them in the `[vars]` section of `wrangler.toml` and redeploy.
+Change them in the `[vars]` section of `wrangler.toml`.
 
 | Setting | Default | What it stops |
 |---|---|---|
@@ -53,12 +43,13 @@ Change them in the `[vars]` section of `wrangler.toml` and redeploy.
 | `MAX_LEVEL_KB` / `MAX_LEVEL_BLOCKS` | 400 / 2000 | huge uploads |
 
 Workers can't measure CPU time from inside a request, so the cloud sim counts collision
-checks as a stand-in. That's deterministic and can't be gamed.
+checks as a stand-in. That's deterministic and can't be gamed. Optionally, add a secret
+called `SALT` in the Worker's settings on the Cloudflare dashboard. It's used when hashing
+player IPs for rate limits and likes.
 
 **Costs:** levels and multiplayer fit easily in Cloudflare's free plan. Cloud physics keeps a
-Durable Object busy while it runs, so if lots of people use it you may want the
-[Workers Paid plan](https://developers.cloudflare.com/workers/platform/pricing/), or lower
-`CLOUD_MAX_ROOMS` / `CLOUD_SESSION_MINUTES`.
+Durable Object busy while it runs, so if lots of people use it you may want the Workers Paid
+plan, or lower `CLOUD_MAX_ROOMS` / `CLOUD_SESSION_MINUTES`.
 
 ## What cloud physics supports
 
@@ -71,13 +62,10 @@ Breakable blocks (glass, bricks, crates, TNT) act as solid walls in the cloud. F
 still there. Special ball powers other than rocket, balloon, phantom, hyper and rainbow are
 off in the cloud.
 
-## Develop locally
+## For developers
 
 ```bash
 npm install
-npm run db:local
-npx wrangler dev          # http://127.0.0.1:8787
-npm run test:sim          # tests for the cloud physics
+npx wrangler dev     # local server at http://127.0.0.1:8787
+npm test             # cloud physics tests
 ```
-
-Point the game at `http://127.0.0.1:8787` in Settings > Online.
