@@ -20,6 +20,7 @@ class UI:
         self.tip_owner = None
         self.mouse = (0, 0)
         self.sound = None
+        self.focus = None   # widget receiving keyboard input (NumberInput)
 
     def font(self, size, bold=False):
         key = (size, bold)
@@ -444,10 +445,13 @@ class Tile(Widget):
         self.draw_icon(surf, icon)
         surf.set_clip(prev)
         name = self.label
-        f = ui.font(11, True)
+        size = 11
+        while size > 9 and ui.font(size, True).size(name)[0] > self.rect.w - 6:
+            size -= 1
+        f = ui.font(size, True)
         while f.size(name)[0] > self.rect.w - 6 and len(name) > 3:
             name = name[:-2]
-        ui.text(surf, name, (self.rect.centerx, self.rect.bottom - 11), 11,
+        ui.text(surf, name, (self.rect.centerx, self.rect.bottom - 11), size,
                 TEXT if sel or hov else TEXT_DIM, True, "center")
         if self.hotkey:
             ui.text(surf, self.hotkey, (self.rect.x + 5, self.rect.y + 3), 10, TEXT_DIM)
@@ -539,3 +543,65 @@ class ScrollList:
             h = max(30, int(self.rect.h * k))
             y = self.rect.y + int((self.rect.h - h) * (self.scroll / max(1, self.content_h - self.rect.h)))
             pygame.draw.rect(surf, (70, 70, 100), (self.rect.right - 6, y, 4, h), border_radius=2)
+
+
+class NumberInput(Widget):
+    """Click, type a number, press Enter."""
+    height = 32
+
+    def __init__(self, label, get, set, lo, hi, tip=None, integer=True):
+        super().__init__(tip)
+        self.label, self.get, self.set = label, get, set
+        self.lo, self.hi, self.integer = lo, hi, integer
+        self.buf = None
+
+    def _box(self):
+        w = int(self.rect.w * 0.42)
+        return pygame.Rect(self.rect.right - w, self.rect.y + 3, w, self.rect.h - 6)
+
+    def event(self, e, ui):
+        if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1 and self.rect.collidepoint(e.pos):
+            ui.focus = self
+            v = self.get()
+            self.buf = str(int(v) if self.integer else v)
+            return True
+        return False
+
+    def key(self, e, ui):
+        if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_TAB):
+            self.commit(ui)
+        elif e.key == pygame.K_ESCAPE:
+            self.buf = None
+            ui.focus = None
+        elif e.key == pygame.K_BACKSPACE:
+            self.buf = self.buf[:-1]
+        elif e.unicode and (e.unicode.isdigit() or (e.unicode == "." and not self.integer)) \
+                and len(self.buf) < 9:
+            self.buf += e.unicode
+
+    def commit(self, ui):
+        try:
+            v = float(self.buf)
+            v = clamp(v, self.lo, self.hi)
+            self.set(int(v) if self.integer else v)
+        except (TypeError, ValueError):
+            pass
+        self.buf = None
+        if ui.focus is self:
+            ui.focus = None
+
+    def draw(self, surf, ui):
+        ui.text(surf, self.label, (self.rect.x, self.rect.centery), 14, TEXT, False, "midleft")
+        box = self._box()
+        editing = ui.focus is self
+        hov = self.rect.collidepoint(ui.mouse)
+        pygame.draw.rect(surf, (12, 12, 20), box, border_radius=6)
+        pygame.draw.rect(surf, ACCENT if editing else (mix(BORDER, ACCENT, 0.5) if hov else BORDER), box,
+                         2 if editing else 1, border_radius=6)
+        if editing:
+            caret = "|" if (pygame.time.get_ticks() // 400) % 2 else " "
+            txt = self.buf + caret
+        else:
+            v = self.get()
+            txt = f"{int(v):,}" if self.integer else f"{v:g}"
+        ui.text(surf, txt, (box.right - 10, box.centery), 14, ACCENT if editing else TEXT, True, "midright")

@@ -123,7 +123,7 @@ class Renderer:
             # inline world->screen transform: this loop runs for every ball
             cx, cy = cam.x, cam.y
             ox, oy = cam.viewport.centerx, cam.viewport.centery
-            crowd = len(world.balls) > 600
+            crowd = len(world.balls) > s.detail_threshold * 0.66
             lines = pygame.draw.lines
             for b in world.balls:
                 h = b.history
@@ -139,7 +139,7 @@ class Renderer:
                         lines(surf, _dim(b.color, 0.45), False, pts[half:], w)
         cx, cy = cam.x, cam.y
         ox, oy = cam.viewport.centerx, cam.viewport.centery
-        big_crowd = len(world.balls) > 900
+        big_crowd = len(world.balls) > s.detail_threshold
         if big_crowd:
             glow = False  # level of detail: keep the frame rate up in huge swarms
         for b in world.balls:
@@ -148,7 +148,7 @@ class Renderer:
             sx, sy = (b.x - cx) * z + ox, (b.y - cy) * z + oy
             r = b.r * z
             ri = max(1, int(r))
-            if big_crowd and b.kind == "normal":
+            if big_crowd and b.kind == "normal" and b.frozen <= 0:
                 circle(surf, b.color, (sx, sy), r)
                 continue
             if glow and ri >= 2:
@@ -166,6 +166,8 @@ class Renderer:
             circle(surf, b.color, (sx, sy), r)
             if ri >= 4:
                 circle(surf, mix(b.color, (255, 255, 255), 0.6), (sx - r * 0.3, sy - r * 0.3), r * 0.32)
+            if b.frozen > 0:
+                circle(surf, (200, 240, 255), (sx, sy), r + 2, 2)
             if b.kind == "magnet" and ri >= 4:
                 circle(surf, (255, 255, 255), (sx, sy), r, 1)
             elif b.kind == "heavy" and ri >= 4:

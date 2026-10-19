@@ -14,10 +14,10 @@ from .audio import Audio
 from .balls import BALL_ORDER, BALL_TYPES
 from .presets import PRESETS
 from .render import Renderer
-from .settings import (ACCENT, ACCENT2, BG, BORDER, COLOR_SCHEMES, DANGER, LIMIT_ACTIONS,
-                       PANEL, PANEL_LIGHT, TEXT, TEXT_DIM, WARN, Settings)
-from .ui import (UI, Button, Choice, Grid, Header, Label, Row, ScrollList, Slider, Spacer,
-                 Tabs, Tile, Toggle, panel, wrap)
+from .settings import (ACCENT, ACCENT2, BG, BORDER, COLOR_SCHEMES, DANGER, FPS_OPTIONS,
+                       LIMIT_ACTIONS, PANEL, PANEL_LIGHT, TEXT, TEXT_DIM, WARN, Settings)
+from .ui import (UI, Button, Choice, Grid, Header, Label, NumberInput, Row, ScrollList, Slider,
+                 Spacer, Tabs, Tile, Toggle, panel, wrap)
 from .util import Camera, TAU, clamp, mix, rotate
 from .world import World
 
@@ -152,6 +152,7 @@ HELP_LINES = [
     ("G", "Snap to grid"),
     ("Tab  /  Home", "Hide the UI  /  reset the camera"),
     ("F11  /  H", "Fullscreen  /  this help"),
+    ("O", "Settings (FPS limit, ball limit, graphics, sound)"),
     ("Esc", "Deselect, or go back to the menu"),
 ]
 
@@ -169,8 +170,8 @@ class App:
         self.clock = pygame.time.Clock()
         self.settings = Settings()
         self.profile = _read_json(SAVE_DIR / "profile.json") or {}
-        self.settings.sound = self.profile.get("sound", True)
-        self.settings.volume = self.profile.get("volume", 0.5)
+        self.settings.load_dict(self.profile.get("prefs", {}))
+        self.overlay = None
         self.audio = Audio(self.settings)
         self.ui = UI()
         self.ui.sound = self.audio.play
@@ -179,7 +180,7 @@ class App:
         self.scene = MenuScene(self)
 
     def save_profile(self):
-        self.profile.update(sound=self.settings.sound, volume=self.settings.volume,
+        self.profile.update(prefs=self.settings.prefs(),
                             achievements=sorted(self.achievements.unlocked))
         _write_json(SAVE_DIR / "profile.json", self.profile)
 
@@ -194,9 +195,22 @@ class App:
         except pygame.error:
             pass
         self.scene.resize()
+        if self.overlay:
+            self.overlay.build()
 
     def set_scene(self, scene):
         self.scene = scene
+
+    def open_settings(self):
+        self.overlay = SettingsOverlay(self)
+
+    def close_settings(self):
+        if self.ui.focus:
+            self.ui.focus.commit(self.ui)
+        self.overlay = None
+        self.save_profile()
+        if isinstance(self.scene, SandboxScene):
+            self.scene.resize()
 
     def quit(self):
         if isinstance(self.scene, SandboxScene):
@@ -205,7 +219,7 @@ class App:
         self.running = False
 
     def frame(self, events=None):
-        dt = self.clock.tick(60) / 1000.0
+        dt = self.clock.tick(self.settings.fps_limit) / 1000.0  # fps_limit 0 = uncapped
         frames = min(dt * 60.0, 3.0)
         for e in (pygame.event.get() if events is None else events):
             if e.type == pygame.QUIT:
@@ -226,11 +240,23 @@ class App:
             if e.type == pygame.MOUSEMOTION and self.ui.active:
                 self.ui.active.drag(e.pos, self.ui)
                 continue
+            focus = self.ui.focus
+            if focus is not None:
+                if e.type == pygame.KEYDOWN:
+                    focus.key(e, self.ui)
+                    continue
+                if e.type == pygame.MOUSEBUTTONDOWN and not focus.rect.collidepoint(e.pos):
+                    focus.commit(self.ui)
+            if self.overlay:
+                self.overlay.event(e)
+                continue
             self.scene.event(e)
         self.ui.mouse = pygame.mouse.get_pos()
         self.ui.tip = None
         self.scene.update(frames, dt)
         self.scene.draw(self.screen)
+        if self.overlay:
+            self.overlay.draw(self.screen)
         self.ui.draw_tip(self.screen, dt)
         pygame.display.flip()
 
@@ -300,6 +326,7 @@ class MenuScene:
                                     color=(60, 200, 255), height=44, size=16))
             items += [
                 Button("CHOOSE LEVEL", lambda: self._mode("levels"), color=ACCENT2, height=44, size=16),
+                Button("SETTINGS", self.app.open_settings, height=44, size=16),
                 Button("HOW TO PLAY", lambda: self._mode("help"), height=44, size=16),
                 Button(lambda: "SOUND: ON" if self.app.settings.sound else "SOUND: OFF",
                        self._toggle_sound, height=38),
@@ -319,7 +346,8 @@ class MenuScene:
                 card.layout(x0 + (i % cols) * (cw + gap), y0 + (i // cols) * (74 + gap), cw)
                 self.widgets.append(card)
             back = Button("BACK", lambda: self._mode("main"), height=40)
-            back.layout(W // 2 - 100, y0 + 3 * (74 + gap) + 20, 200)
+            rows = (len(PRESETS) + cols - 1) // cols
+            back.layout(W // 2 - 100, y0 + rows * (74 + gap) + 20, 200)
             self.widgets.append(back)
         else:
             back = Button("BACK", lambda: self._mode("main"), height=40)
@@ -499,11 +527,12 @@ class SandboxScene:
             (Button(lambda: f"{self.s.time_speed:g}x", lambda: setattr(self.s, "time_speed", 1.0),
                     tip="Simulation speed. Click to reset to 1x."), 54),
             (Button("+", lambda: sp(1), tip="Faster (+)"), 30),
-            (Button("+10 BALLS", lambda: w.spawn_center(10), tip="Spawn 10 balls in the centre (B)"), 96),
+            (Button("+10", lambda: w.spawn_center(10), tip="Spawn 10 balls in the centre (B)"), 48),
             (Button("CLEAR BALLS", w.clear_balls, tip="Delete every ball (C)"), 108),
-            (Button("CLEAR BLOCKS", self.clear_blocks, color=(90, 30, 45), text_color=TEXT,
-                    tip="Delete every block (can be undone)"), 116),
+            (Button("CLEAR MAP", self.clear_blocks, color=(90, 30, 45), text_color=TEXT,
+                    tip="Delete every block (can be undone)"), 96),
             (Button("UNDO", self.undo, tip="Undo (Ctrl+Z)"), 62),
+            (Button("SETTINGS", self.app.open_settings, tip="FPS, ball limit, graphics, sound (O)"), 92),
             (Button("HELP", lambda: setattr(self, "show_help", not self.show_help), tip="Controls (H)"), 58),
             (Button("MENU", self.to_menu, tip="Back to the main menu (progress is auto-saved)"), 62),
         ]
@@ -630,7 +659,11 @@ class SandboxScene:
                              "How many new balls appear when one escapes the outer ring."),
                 Choice("Escape ball type", BALL_ORDER, lambda: s.spawn_type,
                        lambda v: setattr(s, "spawn_type", v), names=lambda k: BALL_TYPES[k]["name"]),
-                self._slider("Max balls", "max_balls", 10, 3000, 10, "Ball limit before the limit action kicks in."),
+                self._slider("Max balls", "max_balls", 10, 5000, 10, "Ball limit before the limit action kicks in."),
+                NumberInput("Custom limit", lambda: s.max_balls, lambda v: setattr(s, "max_balls", v),
+                            1, 1_000_000, "Type any ball limit you want and press Enter."),
+                self._toggle("Unlimited balls", "unlimited_balls",
+                             "No ball limit at all. Your computer is the limit!"),
                 Choice("At the limit", LIMIT_ACTIONS, lambda: s.limit_action,
                        lambda v: setattr(s, "limit_action", v)),
                 self._slider("Free ball lifetime (s)", "escaped_lifetime", 0, 120, 1,
@@ -885,6 +918,8 @@ class SandboxScene:
         self.resize()
 
     def autosave(self):
+        if not self.s.autosave:
+            return
         self.save_file(SAVE_DIR / "autosave.json", quiet=True)
 
     def to_menu(self):
@@ -1035,6 +1070,8 @@ class SandboxScene:
         elif k == pygame.K_TAB:
             self.show_ui = not self.show_ui
             self.resize()
+        elif k == pygame.K_o:
+            self.app.open_settings()
         elif k in (pygame.K_h, pygame.K_F1):
             self.show_help = not self.show_help
         elif k == pygame.K_HOME:
@@ -1311,6 +1348,8 @@ class SandboxScene:
             self._draw_panels(surf)
         else:
             self.ui.text(surf, "Tab: show UI", (12, 10), 13, TEXT_DIM)
+            if self.s.show_fps:
+                self.ui.text(surf, f"{self.fps:.0f} FPS", (surf.get_width() - 12, 10), 14, ACCENT, True, "topright")
         if self.show_help:
             self._draw_help(surf)
 
@@ -1344,20 +1383,23 @@ class SandboxScene:
         ui.text(surf, "FUN BALL GAME", (16, 9), 20, ACCENT, True)
         ui.text(surf, "v4 sandbox", (18, 33), 11, TEXT_DIM)
         x = 188
-        stats = [
-            ("BALLS", f"{len(w.balls)}/{self.s.max_balls}",
-             DANGER if len(w.balls) >= self.s.max_balls else TEXT),
-            ("ESCAPES", str(w.stats["escapes"]), TEXT),
-            ("COINS", str(w.coins), (255, 215, 60)),
-            ("BLOCKS", str(len(w.blocks)), TEXT),
-            ("FPS", f"{self.fps:.0f}", ACCENT if self.fps > 50 else (WARN if self.fps > 30 else DANGER)),
-        ]
+        limit = self.s.ball_limit()
+        stats = [("BALLS" if not self.s.unlimited_balls else "BALLS (NO LIMIT)",
+                  str(len(w.balls)) if self.s.unlimited_balls else f"{len(w.balls)}/{self.s.max_balls}",
+                  DANGER if len(w.balls) >= limit else TEXT)]
+        if self.s.show_fps:
+            stats.append(("FPS", f"{self.fps:.0f}",
+                          ACCENT if self.fps > 50 else (WARN if self.fps > 30 else DANGER)))
+        stats += [("COINS", str(w.coins), (255, 215, 60)),
+                  ("ESCAPES", str(w.stats["escapes"]), TEXT),
+                  ("BLOCKS", str(len(w.blocks)), TEXT)]
         for label, val, col in stats:
-            if x + 80 > self.top_stats_right:
+            lw = max(ui.font(18, True).size(val)[0], ui.font(10, True).size(label)[0])
+            if x + lw > self.top_stats_right:
                 break
             ui.text(surf, label, (x, 9), 10, TEXT_DIM, True)
-            r = ui.text(surf, val, (x, 22), 18, col, True)
-            x += max(70, r.w + 22)
+            ui.text(surf, val, (x, 22), 18, col, True)
+            x += max(52, lw + 18)
         for b in self.top_widgets:
             b.hover(ui)
             b.draw(surf, ui)
@@ -1419,6 +1461,162 @@ class SandboxScene:
                 self.ui.text(surf, desc, (r.x + 230, y), 14, TEXT)
             y += 22
         self.ui.text(surf, "Press any key to close", (r.centerx, r.bottom - 22), 13, TEXT_DIM, False, "center")
+
+
+class SettingsOverlay:
+    """The settings screen. Opens over the menu or the game."""
+
+    TABS = ["Display", "Performance", "Gameplay", "Audio"]
+
+    def __init__(self, app):
+        self.app = app
+        self.tab = "Display"
+        self.list = ScrollList()
+        self.build()
+
+    def rect(self):
+        W, H = self.app.screen.get_size()
+        h = min(640, H - 60)
+        return pygame.Rect(W // 2 - 340, H // 2 - h // 2, 680, h)
+
+    def _set_tab(self, t):
+        self.tab = t
+        self.build()
+
+    def _bind(self, attr):
+        s = self.app.settings
+        return (lambda: getattr(s, attr)), (lambda v: setattr(s, attr, v))
+
+    def _slider(self, label, attr, lo, hi, step, tip=None, fmt=None):
+        g, st = self._bind(attr)
+        if isinstance(getattr(self.app.settings, attr), int):
+            st_int = st
+            st = lambda v: st_int(int(v))  # noqa: E731
+        return Slider(label, g, st, lo, hi, step, fmt, tip)
+
+    def _toggle(self, label, attr, tip=None):
+        g, st = self._bind(attr)
+        return Toggle(label, g, st, tip)
+
+    def _fullscreen(self, v):
+        if v != self.app.fullscreen:
+            self.app.toggle_fullscreen()
+
+    def _reset(self):
+        self.app.settings.reset(keep_prefs=False)
+        scene = self.app.scene
+        if isinstance(scene, SandboxScene):
+            scene.world.rings = []
+            scene.world.rebuild_rings()
+        self.build()
+
+    def build(self):
+        s = self.app.settings
+        r = self.rect()
+        self.tabs = Tabs(self.TABS, lambda: self.tab, self._set_tab, 14)
+        self.tabs.layout(r.x + 20, r.y + 58, r.w - 40)
+        if self.tab == "Display":
+            wd = [
+                Header("Frame rate"),
+                Choice("FPS limit", FPS_OPTIONS, lambda: s.fps_limit, lambda v: setattr(s, "fps_limit", v),
+                       "How many frames per second to draw. Unlimited = as fast as your PC can go.",
+                       names=lambda v: "Unlimited" if v == 0 else f"{v} FPS"),
+                NumberInput("Custom FPS limit (0 = unlimited)", lambda: s.fps_limit,
+                            lambda v: setattr(s, "fps_limit", v), 0, 1000,
+                            "Type any frame-rate cap and press Enter."),
+                self._toggle("Show FPS counter", "show_fps"),
+                Label("Physics runs at the same speed whatever your FPS, so a higher FPS just "
+                      "makes everything smoother.", 13),
+                Header("Screen"),
+                Toggle("Fullscreen (F11)", lambda: self.app.fullscreen, self._fullscreen),
+                Header("Look"),
+                Choice("Colour scheme", list(COLOR_SCHEMES), lambda: s.color_scheme,
+                       lambda v: setattr(s, "color_scheme", v)),
+                self._toggle("Glow", "glow"),
+                self._toggle("Motion trails", "trails"),
+                self._toggle("Particles", "particles"),
+                self._toggle("Screen shake", "screen_shake"),
+                self._toggle("Background grid", "show_grid"),
+            ]
+        elif self.tab == "Performance":
+            wd = [
+                Header("Quality"),
+                self._slider("Full detail up to (balls)", "detail_threshold", 100, 10000, 50,
+                             "Above this many balls, glow and shading switch off to keep the FPS up."),
+                self._slider("Max particles", "max_particles", 0, 20000, 100,
+                             "Sparks, smoke and shards. Fewer = faster."),
+                self._slider("Trail length", "trail_length", 2, 40, 1),
+                Header("Physics"),
+                self._slider("Physics substeps", "substeps", 1, 8, 1,
+                             "More substeps = more accurate collisions, but slower."),
+                self._toggle("Ball-to-ball collisions", "ball_collisions",
+                             "Turning this off makes huge swarms MUCH faster."),
+                Label("Tip: for thousands of balls, turn off ball collisions and glow, and "
+                      "lower the substeps.", 13),
+            ]
+        elif self.tab == "Gameplay":
+            wd = [
+                Header("Ball limit"),
+                self._slider("Max balls", "max_balls", 10, 5000, 10),
+                NumberInput("Custom ball limit", lambda: s.max_balls, lambda v: setattr(s, "max_balls", v),
+                            1, 1_000_000, "Type any number and press Enter."),
+                self._toggle("Unlimited balls", "unlimited_balls",
+                             "No limit at all. It will get slow eventually!"),
+                Choice("When the limit is reached", LIMIT_ACTIONS, lambda: s.limit_action,
+                       lambda v: setattr(s, "limit_action", v)),
+                Header("Spawning"),
+                self._slider("Balls per escape", "balls_per_escape", 0, 10, 1),
+                self._slider("Free ball lifetime (s)", "escaped_lifetime", 0, 120, 1,
+                             "Escaped balls disappear after this long. 0 = never."),
+                Header("Saving"),
+                self._toggle("Autosave when leaving", "autosave",
+                             "Saves your sandbox when you go back to the menu or quit."),
+            ]
+        else:
+            wd = [
+                Header("Sound"),
+                self._toggle("Sound effects", "sound"),
+                self._slider("Volume", "volume", 0, 1, 0.05),
+                Button("Test sound", lambda: self.app.audio.play("achievement", 10)),
+            ]
+            if not self.app.audio.ok:
+                wd.append(Label("No audio device found, so the game is running silently.", 13, WARN))
+        self.list.set(wd)
+        self.list.layout(pygame.Rect(r.x + 8, r.y + 98, r.w - 16, r.h - 160))
+        bw = 170
+        self.done = Button("DONE", self.app.close_settings, color=ACCENT, height=38, size=15)
+        self.done.layout(r.right - bw - 20, r.bottom - 52, bw)
+        self.reset = Button("Reset everything", self._reset, color=(90, 30, 45), text_color=TEXT,
+                            height=38, tip="Put every setting back to its default")
+        self.reset.layout(r.x + 20, r.bottom - 52, bw)
+
+    def event(self, e):
+        ui = self.app.ui
+        if e.type == pygame.KEYDOWN and e.key in (pygame.K_ESCAPE, pygame.K_o):
+            self.app.close_settings()
+            return
+        if e.type == pygame.MOUSEBUTTONDOWN:
+            for w in (self.done, self.reset, self.tabs):
+                if w.event(e, ui):
+                    return
+            self.list.event(e, ui)
+
+    def draw(self, surf):
+        ui = self.app.ui
+        W, H = surf.get_size()
+        shade = pygame.Surface((W, H), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 170))
+        surf.blit(shade, (0, 0))
+        r = self.rect()
+        panel(surf, r, (16, 16, 26), ACCENT)
+        ui.text(surf, "SETTINGS", (r.x + 24, r.y + 18), 24, ACCENT, True)
+        ui.text(surf, "Saved automatically", (r.right - 24, r.y + 26), 12, TEXT_DIM, False, "topright")
+        self.list.layout(self.list.rect)
+        self.tabs.draw(surf, ui)
+        self.list.draw(surf, ui)
+        for w in (self.done, self.reset):
+            w.hover(ui)
+            w.draw(surf, ui)
 
 
 def main():

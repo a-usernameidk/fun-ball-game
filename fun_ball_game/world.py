@@ -7,7 +7,7 @@ from . import blocks as blockmod
 from .arena import build_rings
 from .balls import Ball, BALL_TYPES
 from .particles import Particles
-from .settings import scheme_color
+from .settings import PREF_FIELDS, scheme_color
 from .util import hsv
 
 BLOCK_CELL = 128
@@ -32,6 +32,7 @@ class World:
                           teleports=0, explosions=0, glass=0, peak=0, coins_total=0,
                           blocks_placed=0)
         self._bgrid = {}
+        self._trail_acc = 0.0
         self.rebuild_rings()
 
     # ------------------------------------------------------------------
@@ -63,7 +64,7 @@ class World:
     # ------------------------------------------------------------------
     def spawn_ball(self, x, y, vx=None, vy=None, kind=None, color=None, radius=None):
         s = self.s
-        if len(self.balls) >= s.max_balls:
+        if len(self.balls) >= s.ball_limit():
             if s.limit_action == "Stop Spawning":
                 return None
             if s.limit_action == "Pause Simulation":
@@ -179,6 +180,7 @@ class World:
     def update(self, frames):
         """Advance by `frames` 60fps-frames of wall-clock time."""
         self.fx.enabled = self.s.particles
+        self.fx.max = self.s.max_particles
         self.shake *= 0.85 ** frames
         if self.paused and not self.step_once:
             self.fx.update(frames * 0.3)
@@ -226,6 +228,11 @@ class World:
 
         for b in self.balls:
             if not b.alive or b.grabbed:
+                continue
+            if b.frozen > 0:
+                b.frozen -= dt
+                if b.cooldown > 0:
+                    b.cooldown -= dt
                 continue
             b.vx = (b.vx + gx * dt) * drag
             b.vy = (b.vy + gy * dt) * drag
@@ -411,8 +418,8 @@ class World:
                             continue
                         d = sqrt(d2)
                         nx, ny = dx / d, dy / d
-                        m1 = 1e9 if b1.grabbed else b1.mass
-                        m2 = 1e9 if b2.grabbed else b2.mass
+                        m1 = 1e9 if b1.grabbed or b1.frozen > 0 else b1.mass
+                        m2 = 1e9 if b2.grabbed or b2.frozen > 0 else b2.mass
                         tot = m1 + m2
                         ov = rr - d
                         k1, k2 = ov * m2 / tot, ov * m1 / tot
@@ -434,14 +441,18 @@ class World:
         trails = s.trails
         n_rings = len(self.rings)
         lifetime = s.escaped_lifetime * 60
-        magnets = []
+        magnets, icers, seekers = [], [], []
+        self._trail_acc += frames
+        sample = self._trail_acc >= 1.0
+        if sample:
+            self._trail_acc %= 1.0
         for b in self.balls:
             b.age += frames
-            if trails:
+            if trails and sample:
                 if b.history.maxlen != s.trail_length:
                     b.history = type(b.history)(b.history, maxlen=max(2, s.trail_length))
                 b.history.append((b.x, b.y))
-            elif b.history:
+            elif not trails and b.history:
                 b.history.clear()
             if n_rings and b.layer >= n_rings:
                 b.free_age += frames
@@ -449,7 +460,34 @@ class World:
                     self.kill_ball(b, "pop")
                     continue
             k = b.kind
+            hit = b.bounces - b.prev_bounces
+            b.prev_bounces = b.bounces
             if k == "normal" or k == "tiny":
+                continue
+            if k == "gold":
+                if hit > 0 and b.bounces // 5 > (b.bounces - hit) // 5:
+                    self.add_coins(1, b.x, b.y - b.r)
+                continue
+            if k == "sticky":
+                if hit > 0 and b.frozen <= 0:
+                    b.vx = b.vy = 0.0
+                    b.frozen = 50
+                continue
+            if k == "cluster":
+                if b.bounces >= 3:
+                    self.kill_ball(b, "pop")
+                    for i in range(6):
+                        a = i * math.tau / 6 + random.uniform(-0.2, 0.2)
+                        nb = self.spawn_ball(b.x, b.y, math.cos(a) * 5, math.sin(a) * 5, kind="tiny",
+                                             color=b.color)
+                        if nb:
+                            nb.layer, nb.rewarded = b.layer, b.rewarded
+                continue
+            if k == "ice":
+                icers.append(b)
+                continue
+            if k == "seeker":
+                seekers.append(b)
                 continue
             if k == "fire":
                 if random.random() < 0.6:
@@ -486,11 +524,30 @@ class World:
                     a = 0.25 * (1 - d / 180) * frames
                     b.vx += dx / d * a
                     b.vy += dy / d * a
+        for ice in icers[:30]:
+            for b in self.balls:
+                if b is ice or b.kind == "ice" or b.frozen > 0:
+                    continue
+                dx, dy = b.x - ice.x, b.y - ice.y
+                rr = b.r + ice.r + 2
+                if dx * dx + dy * dy < rr * rr:
+                    b.frozen = 120
+                    self.fx.burst(b.x, b.y, (200, 240, 255), 6, 1.5, 2, 20, 0)
+        if seekers:
+            targets = [blk for blk in self.blocks if blk.alive and blk.key in ("coin", "hoop", "brick", "crate")
+                       and getattr(blk, "cool", 0) <= 0]
+            if targets:
+                for b in seekers[:60]:
+                    t = min(targets, key=lambda blk: (blk.x - b.x) ** 2 + (blk.y - b.y) ** 2)
+                    dx, dy = t.x - b.x, t.y - b.y
+                    d = math.hypot(dx, dy) or 1.0
+                    b.vx += dx / d * 0.35 * frames
+                    b.vy += dy / d * 0.35 * frames
         if any(not b.alive for b in self.balls):
             self.balls = [b for b in self.balls if b.alive]
         if any(not blk.alive for blk in self.blocks):
             self.blocks = [blk for blk in self.blocks if blk.alive]
-        if s.limit_action == "Delete Oldest" and len(self.balls) > s.max_balls:
+        if s.limit_action == "Delete Oldest" and len(self.balls) > s.ball_limit():
             del self.balls[:len(self.balls) - s.max_balls]
         self.stats["peak"] = max(self.stats["peak"], len(self.balls))
         self.audio.tick(frames)
@@ -503,7 +560,7 @@ class World:
                 "blocks": [b.to_dict() for b in self.blocks if b.alive]}
 
     def load_dict(self, data):
-        self.s.load_dict(data.get("settings", {}))
+        self.s.load_dict(data.get("settings", {}), skip=PREF_FIELDS)
         self.balls.clear()
         self.blocks.clear()
         self.fx.clear()

@@ -2,8 +2,8 @@
 
 A physics sandbox about balls escaping spinning rings. Every time a ball gets out
 through a gap, more balls spawn in the middle, so it snowballs fast. On top of that
-there's a full level editor with **31 blocks, fields and items**, **10 ball types**,
-**9 ready-made levels**, achievements, saving and a proper in-game UI.
+there's a full level editor with **45 blocks, fields and items**, **15 ball types**,
+**10 ready-made levels**, achievements, saving and a proper in-game UI.
 
 ![Sandbox](docs/screenshot.png)
 
@@ -27,24 +27,31 @@ Runs on Windows, macOS and Linux. Not supported on phones or tablets.
 
 **Blocks (solid):** Stone Wall, Bouncer, Ice, Slime, Glass (shatters), Gold Brick
 (breakable, gives coins), Spikes, Bumper, Spinner, Moving Platform, Conveyor, TNT
-(chain reactions)
+(chain reactions), Saw Blade, Flipper, One-Way Gate, Timed Door, Ball Crate
 
 **Fields (balls pass through):** Gravity Well, Repulsor, Black Hole, Vortex, Fan Zone,
-Speed Boost, Slow-Mo, Water (drag + buoyancy), Anti-Gravity
+Speed Boost, Slow-Mo, Water (drag + buoyancy), Anti-Gravity, White Hole (spawns balls),
+Lava (sets balls on fire), Freeze Zone
 
 **Items:** Portal (pairs by channel), Splitter, Ball Cannon, Paint Ring, Grow Mushroom,
-Shrink Ray, Coin, Mine, Laser (can rotate), Goal Hoop
+Shrink Ray, Coin, Mine, Laser (can rotate), Goal Hoop, Tesla Coil, Transmuter,
+Gravity Flip, Turbo Ring, Teleporter, Counter
 
 **Ball types:** Normal, Heavy, Bouncy, Ghost, Fireball, Bomb, Rainbow, Splitter,
-Magnet, Tiny
+Magnet, Tiny, Gold, Ice, Seeker, Sticky, Cluster
 
 **Levels:** Classic (the original game), Nested Rings, Pinball, Portal Maze,
-Black Holes, Ball Factory, Demolition, Chaos, Empty Sandbox
+Black Holes, Ball Factory, Demolition, Chaos, Arcade, Empty Sandbox
 
 **Settings:** up to 6 nested rings, plus rotation speed, gap count and size, gravity
 strength and direction, time speed, bounciness, energy boost, ball limit and limit
 action, colour schemes, trails, glow, particles, screen shake and sound. Nearly every
 number in the game has a slider.
+
+**Settings screen** (SETTINGS button or `O`): FPS limit from 30 up to unlimited, or type
+your own; FPS counter; fullscreen; a custom ball limit (type any number) or no limit at
+all; particle cap; detail level for huge swarms; physics substeps; autosave; sound.
+These are your preferences, so loading levels or save files won't change them.
 
 Click any block with the Select tool to open it in the **Inspect** tab. There you can
 change its size, rotation and its own properties (bumper power, cannon fire rate and
@@ -70,6 +77,7 @@ ball type, portal channel, black hole strength, and so on).
 | G | Snap to grid |
 | Tab | Hide the UI |
 | F11 | Fullscreen |
+| O | Settings |
 | H | Help |
 
 Saves, autosave and achievements go in the `saves/` folder next to the game.

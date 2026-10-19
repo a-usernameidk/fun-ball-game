@@ -18,6 +18,7 @@ class Particles:
         self.items = []
         self.texts = []  # [x, y, text, color, life]
         self.enabled = True
+        self.max = MAX_PARTICLES
 
     def clear(self):
         self.items.clear()
@@ -27,7 +28,7 @@ class Particles:
               gravity=0.05, drag=0.96, spread=math.tau, angle=0.0):
         if not self.enabled:
             return
-        room = MAX_PARTICLES - len(self.items)
+        room = self.max - len(self.items)
         n = min(n, room)
         for _ in range(n):
             a = angle + random.uniform(-spread / 2, spread / 2)
@@ -37,7 +38,7 @@ class Particles:
                                color, random.uniform(0.6, 1.0) * size, gravity, drag])
 
     def trail(self, x, y, color, size=2.0, life=18, gravity=-0.03):
-        if not self.enabled or len(self.items) >= MAX_PARTICLES:
+        if not self.enabled or len(self.items) >= self.max:
             return
         self.items.append([x + random.uniform(-2, 2), y + random.uniform(-2, 2),
                            random.uniform(-0.4, 0.4), random.uniform(-0.4, 0.4),

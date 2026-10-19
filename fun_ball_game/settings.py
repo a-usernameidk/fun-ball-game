@@ -105,17 +105,43 @@ class Settings:
     sound: bool = True
     volume: float = 0.5
 
+    # --- display & performance ------------------------------------------
+    fps_limit: int = 60          # 0 = unlimited
+    show_fps: bool = True
+    unlimited_balls: bool = False
+    max_particles: int = 4000
+    detail_threshold: int = 900  # above this many balls glow/highlights switch off
+    autosave: bool = True
+
     def to_dict(self):
         return asdict(self)
 
-    def load_dict(self, data):
+    def load_dict(self, data, skip=()):
         names = {f.name: f for f in fields(self)}
         for k, v in data.items():
-            if k in names:
+            if k in names and k not in skip:
                 try:
                     setattr(self, k, type(getattr(self, k))(v))
                 except (TypeError, ValueError):
                     pass
 
-    def reset(self):
+    def reset(self, keep_prefs=True):
+        """Back to defaults. Player preferences survive unless keep_prefs=False."""
+        prefs = self.prefs()
         self.load_dict(Settings().to_dict())
+        if keep_prefs:
+            self.load_dict(prefs)
+
+    def prefs(self):
+        return {k: getattr(self, k) for k in PREF_FIELDS}
+
+    def ball_limit(self):
+        return float("inf") if self.unlimited_balls else self.max_balls
+
+
+# Player preferences: kept when loading levels or save files, stored in the profile.
+PREF_FIELDS = ("sound", "volume", "fps_limit", "show_fps", "max_balls", "unlimited_balls",
+               "limit_action", "max_particles", "detail_threshold", "autosave", "glow",
+               "particles", "screen_shake", "trails", "trail_length", "substeps")
+
+FPS_OPTIONS = [30, 45, 60, 75, 90, 120, 144, 165, 240, 360, 0]

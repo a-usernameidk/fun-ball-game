@@ -1292,3 +1292,577 @@ class Hoop(Item):
                              (c[0] + math.cos(a + 2.2) * R, c[1] + math.sin(a + 2.2) * R), 1)
         pygame.draw.circle(surf, mix(self.color, (255, 255, 255), self.flash), c, R,
                            max(2, int(4 * cam.zoom)))
+
+
+# ==========================================================================
+# v4.1 additions
+# ==========================================================================
+@register
+class SawBlade(Block):
+    key, name = "saw", "Saw Blade"
+    desc = "A spinning blade that slices any ball that touches it."
+    shape = "circle"
+    color = (200, 205, 215)
+    r = 34.0
+    rotatable = False
+    props = [("spin", "Spin speed", -0.6, 0.6, 0.01)]
+    spin = 0.2
+
+    def update(self, dt, world):
+        super().update(dt, world)
+        self.angle = (self.angle + self.spin * dt) % TAU
+
+    def collide(self, b, world):
+        if math.hypot(b.x - self.x, b.y - self.y) < self.r + b.r - 2:
+            world.kill_ball(b, "pop")
+            self.flash = 0.6
+        return None
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        pts = []
+        n = 16
+        for i in range(n * 2):
+            a = self.angle + i * math.pi / n
+            k = 1.0 if i % 2 == 0 else 0.8
+            pts.append((c[0] + math.cos(a) * R * k, c[1] + math.sin(a) * R * k))
+        pygame.draw.polygon(surf, mix(self.color, (255, 80, 80), self.flash), pts)
+        pygame.draw.circle(surf, (120, 125, 140), c, R * 0.6)
+        for i in range(3):
+            a = self.angle * 2 + i * TAU / 3
+            pygame.draw.line(surf, (90, 95, 110), c, (c[0] + math.cos(a) * R * 0.55,
+                                                     c[1] + math.sin(a) * R * 0.55), 2)
+        pygame.draw.circle(surf, (230, 230, 240), c, max(2, R * 0.14))
+
+
+@register
+class Flipper(Block):
+    key, name = "flipper", "Flipper"
+    desc = "Pinball flipper. Swings up on a timer and smacks balls into the air."
+    color = (255, 90, 60)
+    w, h = 130.0, 20.0
+    restitution = 0.6
+    props = [("interval", "Flip every (frames)", 15, 300, 5),
+             ("swing", "Swing angle", 10, 120, 5),
+             ("speed", "Flip speed", 0.05, 0.6, 0.01),
+             ("mirror", "Mirrored (0/1)", 0, 1, 1)]
+    interval = 90
+    swing = 50
+    speed = 0.25
+    mirror = 0
+
+    def __init__(self, x, y, angle=0.0, **kw):
+        super().__init__(x, y, angle, **kw)
+        self.k = 0.0
+        self.up = False
+        self.timer = random.uniform(0, 60)
+        self.omega = 0.0
+        self.cur = self._arm(0.0)
+
+    def extent(self):
+        return self.w
+
+    def _arm(self, k):
+        """(pivot_x, pivot_y, arm_angle) for flip amount k in [0, 1]."""
+        base = self.angle + (math.pi if self.mirror else 0.0)
+        px = self.x - math.cos(base) * self.w / 2
+        py = self.y - math.sin(base) * self.w / 2
+        sgn = -1 if self.mirror else 1
+        return px, py, base - sgn * math.radians(self.swing) * k
+
+    def update(self, dt, world):
+        super().update(dt, world)
+        self.timer += dt
+        if self.timer >= self.interval:
+            self.timer = 0.0
+            self.up = True
+        if self.up:
+            self.k = min(1.0, self.k + self.speed * dt)
+            if self.k >= 1.0:
+                self.up = False
+        else:
+            self.k = max(0.0, self.k - self.speed * 0.35 * dt)
+        new = self._arm(self.k)
+        self.omega = clamp((new[2] - self.cur[2]) / dt, -0.6, 0.6) if dt > 0 else 0.0
+        self.cur = new
+
+    def _pose(self):
+        px, py, a = self.cur
+        return px + math.cos(a) * self.w / 2, py + math.sin(a) * self.w / 2, a
+
+    def vel_at(self, x, y):
+        px, py, _ = self.cur
+        return -self.omega * (y - py), self.omega * (x - px)
+
+    def _swap(self):
+        saved = (self.x, self.y, self.angle)
+        self.x, self.y, self.angle = self._pose()
+        return saved
+
+    def collide(self, b, world):
+        saved = self._swap()
+        try:
+            return super().collide(b, world)
+        finally:
+            self.x, self.y, self.angle = saved
+
+    def draw(self, surf, cam):
+        saved = self._swap()
+        super().draw(surf, cam)
+        px, py, _ = self.cur
+        pygame.draw.circle(surf, (255, 220, 200), cam.w2s(px, py), max(2, self.h * 0.45 * cam.zoom))
+        self.x, self.y, self.angle = saved
+
+
+@register
+class OneWay(Block):
+    key, name = "oneway", "One-Way Gate"
+    desc = "Balls pass through in the arrow's direction but bounce off the other side."
+    color = (80, 200, 255)
+    h = 16.0
+
+    def collide(self, b, world):
+        lx, ly = self.to_local(b.x, b.y)
+        if ly > 0:  # behind the gate: let it through
+            return None
+        return super().collide(b, world)
+
+    def draw(self, surf, cam):
+        pts = self.screen_poly(cam)
+        poly_alpha(surf, self.color, 90, pts)
+        pygame.draw.polygon(surf, self.color, pts, max(1, int(2 * cam.zoom)))
+        n = max(1, int(self.w / 40))
+        for i in range(n):
+            lx = -self.w / 2 + self.w * (i + 0.5) / n
+            off = (self.t * 0.4) % 8
+            tri = [(lx - 6, 4 - off), (lx, -4 - off), (lx + 6, 4 - off)]
+            tri = [rotate(a, b, self.angle) for a, b in tri]
+            pygame.draw.lines(surf, (230, 250, 255), False,
+                              [cam.w2s(self.x + a, self.y + b) for a, b in tri], max(1, int(2 * cam.zoom)))
+
+
+@register
+class Door(Block):
+    key, name = "door", "Door"
+    desc = "A wall that opens and closes on a timer."
+    color = (255, 160, 60)
+    w, h = 120.0, 20.0
+    props = [("open_time", "Open for (frames)", 10, 600, 10),
+             ("closed_time", "Closed for (frames)", 10, 600, 10)]
+    open_time = 90
+    closed_time = 120
+
+    def is_open(self):
+        return (self.t % (self.open_time + self.closed_time)) >= self.closed_time
+
+    def collide(self, b, world):
+        if self.is_open():
+            return None
+        return super().collide(b, world)
+
+    def draw(self, surf, cam):
+        pts = self.screen_poly(cam)
+        if self.is_open():
+            pygame.draw.polygon(surf, scale(self.color, 0.35), pts, 1)
+            return
+        super().draw(surf, cam)
+        left = self.closed_time - (self.t % (self.open_time + self.closed_time))
+        if left < 30 and int(left) % 6 < 3:
+            pygame.draw.polygon(surf, (255, 255, 255), pts, max(1, int(2 * cam.zoom)))
+
+
+@register
+class Crate(Block):
+    key, name = "crate", "Ball Crate"
+    desc = "Smash it open to release a bunch of random balls."
+    color = (170, 120, 60)
+    w, h = 46.0, 46.0
+    restitution = 0.7
+    props = [("hp", "Hit points", 1, 20, 1), ("count", "Balls inside", 1, 40, 1)]
+    hp = 3
+    count = 6
+
+    def burst_open(self, world):
+        if not self.alive:
+            return
+        world.destroy_block(self, "brick")
+        world.add_coins(2, self.x, self.y)
+        for _ in range(int(self.count)):
+            a = random.uniform(0, TAU)
+            sp = random.uniform(2, 7)
+            world.spawn_ball(self.x, self.y, math.cos(a) * sp, math.sin(a) * sp,
+                             kind=random.choice(BALL_ORDER))
+
+    def on_hit(self, b, world, impact, nx, ny):
+        if impact > 1.5 or b.kind == "fire":
+            self.hp -= 3 if b.kind == "fire" else 1
+            self.flash = 0.7
+            world.sound("tick", 4)
+            if self.hp <= 0:
+                self.burst_open(world)
+
+    def on_explosion(self, world, dist, radius):
+        self.burst_open(world)
+
+    def draw(self, surf, cam):
+        super().draw(surf, cam)
+        pts = self.screen_poly(cam)
+        dark = (110, 75, 35)
+        pygame.draw.line(surf, dark, pts[0], pts[2], max(1, int(3 * cam.zoom)))
+        pygame.draw.line(surf, dark, pts[1], pts[3], max(1, int(3 * cam.zoom)))
+
+
+@register
+class WhiteHole(Field):
+    key, name = "whitehole", "White Hole"
+    desc = "The opposite of a black hole: pushes everything away and spits out new balls."
+    shape = "circle"
+    color = (255, 245, 210)
+    r = 200.0
+    rotatable = False
+    props = [("strength", "Push", 0.0, 3.0, 0.05),
+             ("interval", "Spawn every (frames)", 2, 240, 1),
+             ("ball_kind", "Ball type", BALL_ORDER)]
+    strength = 0.5
+    interval = 20
+    ball_kind = "normal"
+
+    def __init__(self, x, y, angle=0.0, **kw):
+        super().__init__(x, y, angle, **kw)
+        self.timer = 0.0
+
+    def update(self, dt, world):
+        super().update(dt, world)
+        self.timer += dt
+        if self.timer >= self.interval:
+            self.timer = 0.0
+            a = random.uniform(0, TAU)
+            if world.spawn_ball(self.x + math.cos(a) * 20, self.y + math.sin(a) * 20,
+                                math.cos(a) * 4, math.sin(a) * 4, kind=self.ball_kind):
+                self.flash = 0.5
+
+    def touch(self, b, world, dt):
+        dx, dy = b.x - self.x, b.y - self.y
+        d = math.hypot(dx, dy)
+        if d < 4:
+            return
+        a = self.strength * 0.6 * math.sqrt(max(0.0, 1 - d / self.r)) * dt
+        b.vx += dx / d * a
+        b.vy += dy / d * a
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = self.r * cam.zoom
+        dashed_circle(surf, scale(self.color, 0.3), c, R, 40, -self.t * 0.004)
+        for i in range(4):
+            k = (self.t * 0.012 + i / 4) % 1.0
+            if R * k > 3:
+                pygame.draw.circle(surf, scale(self.color, 0.6 * (1 - k)), c, R * k, 1)
+        pygame.draw.circle(surf, scale(self.color, 0.5), c, max(3, 20 * cam.zoom))
+        pygame.draw.circle(surf, (255, 255, 255), c, max(2, (12 + 4 * self.flash) * cam.zoom))
+
+
+@register
+class Lava(Field):
+    key, name = "lava", "Lava"
+    desc = "Sets balls on fire, turning them into fireballs."
+    color = (255, 80, 20)
+    w, h = 260.0, 90.0
+    props = [("drag", "Thickness", 0.0, 0.2, 0.005)]
+    drag = 0.04
+
+    def touch(self, b, world, dt):
+        k = max(0.0, 1 - self.drag * dt)
+        b.vx *= k
+        b.vy *= k
+        if b.kind not in ("fire", "ghost"):
+            b.set_kind("fire", b.color)
+            world.fx.burst(b.x, b.y, (255, 160, 40), 6, 2, 2, 20, -0.05)
+
+    def draw(self, surf, cam):
+        pts = self.screen_poly(cam)
+        poly_alpha(surf, self.color, 120, pts)
+        hw, hh = self.w / 2, self.h / 2
+        wave = []
+        for i in range(17):
+            lx = -hw + self.w * i / 16
+            ly = -hh + math.sin(self.t * 0.05 + i * 1.3) * 3
+            px, py = rotate(lx, ly, self.angle)
+            wave.append(cam.w2s(self.x + px, self.y + py))
+        pygame.draw.lines(surf, (255, 210, 80), False, wave, max(1, int(3 * cam.zoom)))
+        rnd = random.Random(int(self.t / 20))
+        for _ in range(3):
+            lx, ly = rnd.uniform(-hw * 0.9, hw * 0.9), rnd.uniform(-hh * 0.6, hh * 0.8)
+            px, py = rotate(lx, ly, self.angle)
+            pygame.draw.circle(surf, (255, 190, 60), cam.w2s(self.x + px, self.y + py),
+                               max(1, 4 * cam.zoom), 1)
+
+
+@register
+class FreezeZone(Field):
+    key, name = "freeze", "Freeze Zone"
+    desc = "Freezes balls solid for a while. Frozen balls act like walls."
+    shape = "circle"
+    color = (170, 230, 255)
+    r = 110.0
+    rotatable = False
+    props = [("duration", "Freeze time (frames)", 10, 600, 10)]
+    duration = 120
+
+    def touch(self, b, world, dt):
+        if b.cooldown <= 0 and b.frozen <= 0:
+            b.frozen = self.duration
+            b.cooldown = self.duration + 45
+            world.fx.burst(b.x, b.y, (220, 245, 255), 5, 1.5, 2, 18, 0)
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = self.r * cam.zoom
+        circle_alpha(surf, self.color, 35, c, R)
+        pygame.draw.circle(surf, scale(self.color, 0.8), c, R, 1)
+        s = R * 0.35
+        for i in range(3):
+            a = i * math.pi / 3 + self.t * 0.003
+            dx, dy = math.cos(a) * s, math.sin(a) * s
+            pygame.draw.line(surf, (230, 250, 255), (c[0] - dx, c[1] - dy), (c[0] + dx, c[1] + dy), 2)
+
+
+@register
+class Tesla(Item):
+    key, name = "tesla", "Tesla Coil"
+    desc = "Zaps the nearest ball in range with lightning."
+    r = 18.0
+    color = (150, 180, 255)
+    props = [("range", "Range", 40, 800, 10), ("interval", "Zap every (frames)", 3, 240, 1)]
+    range = 220.0
+    interval = 30
+
+    def __init__(self, x, y, angle=0.0, **kw):
+        super().__init__(x, y, angle, **kw)
+        self.timer = 0.0
+        self.bolt = None   # (x, y, life)
+
+    def update(self, dt, world):
+        super().update(dt, world)
+        if self.bolt:
+            bx, by, life = self.bolt
+            self.bolt = (bx, by, life - dt) if life - dt > 0 else None
+        self.timer += dt
+        if self.timer < self.interval:
+            return
+        best, bd = None, self.range * self.range
+        for b in world.balls:
+            d2 = (b.x - self.x) ** 2 + (b.y - self.y) ** 2
+            if d2 < bd and b.alive:
+                best, bd = b, d2
+        if best:
+            self.timer = 0.0
+            self.bolt = (best.x, best.y, 10.0)
+            world.kill_ball(best, "zap")
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        dashed_circle(surf, scale(self.color, 0.25), c, self.range * cam.zoom, 30, self.t * 0.002, 1)
+        for i in range(4):
+            pygame.draw.circle(surf, scale(self.color, 0.5 + i * 0.15), (c[0], c[1] - R * 0.5 * i),
+                               R * (1 - i * 0.18))
+        top = (c[0], c[1] - R * 1.7)
+        pygame.draw.circle(surf, (230, 240, 255), top, max(2, R * 0.35))
+        if self.bolt:
+            bx, by, life = self.bolt
+            end = cam.w2s(bx, by)
+            pts = [top]
+            for i in range(1, 7):
+                k = i / 7
+                pts.append((top[0] + (end[0] - top[0]) * k + random.uniform(-8, 8),
+                            top[1] + (end[1] - top[1]) * k + random.uniform(-8, 8)))
+            pts.append(end)
+            pygame.draw.lines(surf, (120, 160, 255), False, pts, 5)
+            pygame.draw.lines(surf, (240, 245, 255), False, pts, 2)
+
+
+@register
+class Transmuter(Item):
+    key, name = "transmuter", "Transmuter"
+    desc = "Turns every ball that passes through into the chosen ball type."
+    r = 24.0
+    props = [("ball_kind", "Turns balls into", BALL_ORDER)]
+    ball_kind = "rainbow"
+
+    @property
+    def color(self):
+        c = BALL_TYPES[self.ball_kind]["color"]
+        return c or hsv(self.t * 0.005)
+
+    def touch(self, b, world, dt):
+        if b.kind != self.ball_kind and b.cooldown <= 0:
+            b.set_kind(self.ball_kind, b.color)
+            if b.kind == "rainbow":
+                b.hue = random.random()
+            b.cooldown = 10
+            self.flash = 1.0
+            world.fx.burst(b.x, b.y, self.color, 8, 2, 2, 18, 0)
+            world.sound("split", 3)
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        pts = [(c[0] + math.cos(self.t * 0.02 + i * TAU / 6) * R,
+                c[1] + math.sin(self.t * 0.02 + i * TAU / 6) * R) for i in range(6)]
+        poly_alpha(surf, self.color, 50 + int(100 * self.flash), pts)
+        pygame.draw.polygon(surf, self.color, pts, 2)
+        pygame.draw.circle(surf, self.color, c, max(2, R * 0.3))
+
+
+@register
+class GravitySwitch(Item):
+    key, name = "gswitch", "Gravity Flip"
+    desc = "When a ball touches it, the whole world's gravity turns."
+    r = 18.0
+    color = (255, 120, 255)
+    props = [("turn", "Turn by (degrees)", 45, 315, 45)]
+    turn = 180
+
+    def __init__(self, x, y, angle=0.0, **kw):
+        super().__init__(x, y, angle, **kw)
+        self.cool = 0.0
+        self.g = 90.0
+
+    def update(self, dt, world):
+        super().update(dt, world)
+        self.g = world.s.gravity_angle
+        if self.cool > 0:
+            self.cool -= dt
+
+    def touch(self, b, world, dt):
+        if self.cool > 0:
+            return
+        self.cool = 90
+        world.s.gravity_angle = (world.s.gravity_angle + self.turn) % 360
+        self.flash = 1.0
+        world.sound("portal", 6)
+        world.fx.burst(self.x, self.y, self.color, 16, 4, 2, 24, 0)
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        col = self.color if self.cool <= 0 else scale(self.color, 0.4)
+        pygame.draw.circle(surf, scale(col, 0.35 + 0.5 * self.flash), c, R)
+        pygame.draw.circle(surf, col, c, R, 2)
+        a = math.radians(self.g)
+        tip = (c[0] + math.cos(a) * R * 0.75, c[1] + math.sin(a) * R * 0.75)
+        tail = (c[0] - math.cos(a) * R * 0.6, c[1] - math.sin(a) * R * 0.6)
+        pygame.draw.line(surf, (255, 255, 255), tail, tip, 2)
+        for s_ in (-0.5, 0.5):
+            pygame.draw.line(surf, (255, 255, 255), tip, (tip[0] - math.cos(a + s_) * R * 0.4,
+                                                          tip[1] - math.sin(a + s_) * R * 0.4), 2)
+
+
+@register
+class TurboRing(Item):
+    key, name = "turbo", "Turbo Ring"
+    desc = "Multiplies the speed of every ball that flies through it."
+    r = 26.0
+    color = (0, 255, 160)
+    props = [("factor", "Speed multiplier", 1.1, 4.0, 0.1)]
+    factor = 1.6
+
+    def touch(self, b, world, dt):
+        if b.cooldown > 0:
+            return
+        b.cooldown = 20
+        b.vx *= self.factor
+        b.vy *= self.factor
+        self.flash = 1.0
+        world.fx.burst(b.x, b.y, self.color, 6, 3, 2, 14, 0, 0.9, 0.6, math.atan2(-b.vy, -b.vx))
+        world.sound("escape", 3)
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        pygame.draw.circle(surf, mix(self.color, (255, 255, 255), self.flash), c, R, max(2, int(4 * cam.zoom)))
+        for i in range(6):
+            a = i * TAU / 6 + self.t * 0.08
+            p = (c[0] + math.cos(a) * R * 0.62, c[1] + math.sin(a) * R * 0.62)
+            pygame.draw.circle(surf, scale(self.color, 0.7), p, max(1, R * 0.12))
+
+
+@register
+class Teleporter(Item):
+    key, name = "teleporter", "Teleporter"
+    desc = "Beams balls to a random spot nearby."
+    r = 22.0
+    color = (200, 120, 255)
+    props = [("range", "Range", 50, 3000, 50)]
+    range = 600.0
+
+    def touch(self, b, world, dt):
+        if b.cooldown > 0:
+            return
+        world.fx.burst(b.x, b.y, self.color, 8, 2.5, 2, 18, 0)
+        a = random.uniform(0, TAU)
+        d = random.uniform(self.r + 40, max(self.r + 41, self.range))
+        hw, hh = world.s.world_width / 2 - b.r, world.s.world_height / 2 - b.r
+        b.x = clamp(self.x + math.cos(a) * d, -hw, hw)
+        b.y = clamp(self.y + math.sin(a) * d, -hh, hh)
+        b.layer = world.layer_for(math.hypot(b.x, b.y))
+        b.history.clear()
+        b.cooldown = 30
+        self.flash = 1.0
+        world.fx.burst(b.x, b.y, self.color, 8, 2.5, 2, 18, 0)
+        world.sound("portal", 4)
+        world.stats["teleports"] += 1
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        pygame.draw.circle(surf, scale(self.color, 0.25 + 0.5 * self.flash), c, R)
+        for i in range(8):
+            a = i * TAU / 8 + self.t * 0.05
+            k = 0.4 + 0.5 * ((i + self.t * 0.1) % 8) / 8
+            pygame.draw.circle(surf, self.color, (c[0] + math.cos(a) * R * k, c[1] + math.sin(a) * R * k),
+                               max(1, R * 0.1))
+        pygame.draw.circle(surf, self.color, c, R, 2)
+
+
+@register
+class Counter(Item):
+    key, name = "counter", "Counter"
+    desc = "Counts every ball that passes through and pays out coins every so often."
+    r = 26.0
+    color = (120, 220, 255)
+    props = [("every", "Pay every N balls", 1, 100, 1), ("value", "Coins per payout", 1, 100, 1)]
+    every = 10
+    value = 5
+
+    def __init__(self, x, y, angle=0.0, **kw):
+        super().__init__(x, y, angle, **kw)
+        self.count = 0
+        self.inside = {}
+
+    def update(self, dt, world):
+        super().update(dt, world)
+        if self.inside:
+            self.inside = {k: v for k, v in self.inside.items() if self.t - v < 3}
+
+    def touch(self, b, world, dt):
+        k = id(b)
+        if k not in self.inside:
+            self.count += 1
+            self.flash = 0.6
+            if self.count % int(self.every) == 0:
+                world.add_coins(int(self.value), self.x, self.y - self.r)
+                world.sound("coin", 4)
+        self.inside[k] = self.t
+
+    def draw(self, surf, cam):
+        c = cam.w2s(self.x, self.y)
+        R = max(3, self.r * cam.zoom)
+        pygame.draw.circle(surf, scale(self.color, 0.15 + 0.4 * self.flash), c, R)
+        pygame.draw.circle(surf, self.color, c, R, 2)
+        if R > 10:
+            font = cam_font(int(clamp(R * 0.8, 8, 40)))
+            img = font.render(str(self.count), True, (230, 245, 255))
+            surf.blit(img, img.get_rect(center=c))

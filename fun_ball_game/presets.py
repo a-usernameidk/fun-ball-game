@@ -3,12 +3,14 @@
 import math
 
 from .blocks import create
+from .settings import PREF_FIELDS
 
 
 def _start(world, **settings):
     world.s.reset()
     for k, v in settings.items():
-        setattr(world.s, k, v)
+        if k not in PREF_FIELDS:  # never override the player's own preferences
+            setattr(world.s, k, v)
     world.balls.clear()
     world.blocks.clear()
     world.fx.clear()
@@ -130,6 +132,38 @@ def chaos(world):
     world.spawn_center(3)
 
 
+def arcade(world):
+    _start(world, ring_count=0, gravity=0.2, world_width=1700, world_height=1400,
+           wall_bounce=0.9, escaped_lifetime=0)
+    _add(world, "whitehole", 0, -560, r=90, strength=0.2, interval=25, ball_kind="gold")
+    for i, x in enumerate((-480, -240, 0, 240, 480)):
+        _add(world, "crate", x, -380, count=5)
+    _add(world, "saw", -330, -150, spin=0.25)
+    _add(world, "saw", 330, -150, spin=-0.25)
+    _add(world, "bumper", -110, -40)
+    _add(world, "bumper", 110, -40)
+    _add(world, "counter", 0, -160)
+    _add(world, "turbo", -560, 60)
+    _add(world, "turbo", 560, 60)
+    _add(world, "transmuter", 0, 120, ball_kind="seeker")
+    _add(world, "door", -560, 260, w=220, angle=0.4)
+    _add(world, "door", 560, 260, w=220, angle=-0.4)
+    _add(world, "oneway", -760, 0, angle=math.pi / 2, w=260)
+    _add(world, "oneway", 760, 0, angle=-math.pi / 2, w=260)
+    _add(world, "wall", -430, 420, angle=0.45, w=360)
+    _add(world, "wall", 430, 420, angle=-0.45, w=360)
+    _add(world, "flipper", -170, 540, angle=0.45, interval=70)
+    _add(world, "flipper", 170, 540, angle=-0.45, interval=70, mirror=1)
+    _add(world, "lava", 0, 670, w=500, h=60)
+    _add(world, "tesla", -760, 600, range=260)
+    _add(world, "tesla", 760, 600, range=260)
+    _add(world, "freeze", -700, -560, r=90)
+    _add(world, "teleporter", 700, -560)
+    _add(world, "gswitch", 0, 360, turn=180)
+    for i in range(6):
+        _add(world, "coin", -250 + i * 100, 260)
+
+
 def empty(world):
     _start(world, ring_count=0)
 
@@ -143,5 +177,6 @@ PRESETS = [
     ("Ball Factory", "Cannons, conveyors, paint, water and a laser. A Rube Goldberg machine.", factory),
     ("Demolition", "Knock down a tower of bricks, glass and TNT with heavy, fire and bomb balls.", demolition),
     ("Chaos", "Three rings, rainbow balls, splitters, bumpers and a giant vortex.", chaos),
+    ("Arcade", "Flippers, saws, crates, doors, tesla coils and a gravity switch. New in v4.1!", arcade),
     ("Empty Sandbox", "Nothing at all. Build whatever you want.", empty),
 ]

@@ -25,6 +25,16 @@ BALL_TYPES = {
                    bounce=0.9, desc="Pulls nearby balls towards itself."),
     "tiny": dict(name="Tiny", color=None, size=0.45, density=1.0, bounce=1.0,
                  desc="Very small. Great for big swarms."),
+    "gold": dict(name="Gold", color=(255, 200, 40), size=1.0, density=2.5, bounce=0.95,
+                 desc="Earns a coin every 5 bounces."),
+    "ice": dict(name="Ice", color=(170, 230, 255), size=1.0, density=1.2, bounce=0.9,
+                desc="Freezes any ball it bumps into for 2 seconds."),
+    "seeker": dict(name="Seeker", color=(255, 90, 255), size=0.9, density=1.0, bounce=1.0,
+                   desc="Homes in on the nearest coin, hoop, brick or crate."),
+    "sticky": dict(name="Sticky", color=(130, 210, 60), size=1.0, density=1.0, bounce=0.5,
+                   desc="Sticks to whatever it hits for a second, then drops off."),
+    "cluster": dict(name="Cluster", color=(255, 170, 0), size=1.4, density=1.5, bounce=0.9,
+                    desc="Bursts into 6 tiny balls on its 3rd bounce."),
 }
 BALL_ORDER = list(BALL_TYPES)
 
@@ -33,7 +43,7 @@ class Ball:
     __slots__ = ("x", "y", "vx", "vy", "r", "mass", "color", "kind", "layer",
                  "rewarded", "history", "alive", "age", "free_age", "bounces",
                  "cooldown", "split_depth", "bounce_mul", "ghost", "hue",
-                 "grabbed")
+                 "grabbed", "frozen", "prev_bounces")
 
     def __init__(self, x, y, vx, vy, r, color, kind="normal", trail=10):
         d = BALL_TYPES.get(kind, BALL_TYPES["normal"])
@@ -55,8 +65,23 @@ class Ball:
         self.split_depth = 0
         self.hue = 0.0
         self.grabbed = False
+        self.frozen = 0.0       # frames left frozen in place (freeze zone, ice ball...)
+        self.prev_bounces = 0
 
     def set_radius(self, r):
         d = BALL_TYPES.get(self.kind, BALL_TYPES["normal"])
         self.r = r
         self.mass = r * r * d["density"]
+
+    def set_kind(self, kind, color):
+        """Turn this ball into another type, keeping its base size and speed."""
+        old = BALL_TYPES.get(self.kind, BALL_TYPES["normal"])
+        d = BALL_TYPES.get(kind, BALL_TYPES["normal"])
+        base = self.r / old["size"]
+        self.kind = kind
+        self.r = base * d["size"]
+        self.mass = self.r * self.r * d["density"]
+        self.color = d["color"] or (self.color if old["color"] is None else color)
+        self.bounce_mul = d["bounce"]
+        self.ghost = kind == "ghost"
+        self.bounces = self.prev_bounces = 0
