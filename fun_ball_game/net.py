@@ -235,6 +235,7 @@ class Session:
         self.players = {}               # id -> {"name", "color"}
         self.cloud = False              # the server is running the physics
         self.cloud_stats = None
+        self.cloud_refused = False
         self.limits = {}
         self.synced = {}                # block uid -> signature we last agreed on
         self.last_settings = None
@@ -567,6 +568,7 @@ class Session:
                 self.toast("Cloud physics on: the server is simulating this world")
             else:
                 was = self.cloud
+                self.cloud_refused = not was
                 self.cloud = False
                 w.remote = False
                 w.rebuild_rings()  # recompute which ring each ball is inside

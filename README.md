@@ -1,4 +1,4 @@
-# Fun Ball Game v4.3 – Pygame Sandbox Edition
+# Fun Ball Game v4.4 – Pygame Sandbox Edition
 
 A physics sandbox about balls escaping spinning rings. Every time a ball gets out
 through a gap, more balls spawn in the middle, so it snowballs fast. On top of that
@@ -33,7 +33,10 @@ a thumbnail. Use QUICK PLAY to try a level without making a world.
 - **Multiplayer:** open a world, go to the **Online** tab and press **Host**. You get a
   5-letter code. Friends go to **ONLINE** on the main menu, type the code and press **Join**.
   You all build in the same world, see each other's cursors and can chat (Enter or T).
-- **Cloud physics:** choose "Host with cloud physics" to let the server run the simulation,
+- **PC / CLOUD button** (top bar): switches who runs the physics. **PC** means your computer does
+  it and works offline. **CLOUD** means the game's server does it, so your computer only has to
+  draw. It works on your own or in a room with friends.
+- **Cloud physics in rooms:** choose "Host with cloud physics" to let the server run the simulation,
   so your PC only has to draw it. The server limits balls, blocks, CPU work, session time
   and spawn speed, so nobody can overload it with a lag machine.
 - **Online levels:** share a world as a level from its Online tab. Browse, play, like and
@@ -111,6 +114,17 @@ ball type, portal channel, black hole strength, and so on).
 Worlds (`saves/worlds/`), save slots, settings and achievements all go in the `saves/`
 folder next to the game. To back up a world, copy its `.json` file.
 
+## Updates
+
+The game updates itself. When it starts, it checks GitHub for a newer version, downloads it
+and installs it. Then the main menu shows **RESTART TO UPDATE**. Your worlds and settings in
+`saves/` are never touched, and the old files are kept in `.update_backup/`. You can turn this
+off with **Settings > Gameplay > Auto-update** (there's also a **Check for updates** button).
+
+**To publish an update:** raise `__version__` in `fun_ball_game/__init__.py` (for example
+4.4.0 to 4.5.0) and merge to `main`. Everyone gets it the next time they start the game.
+Copies run from a `git clone` don't self-update. Use `git pull` for those.
+
 ## Setting up the online server (only the game's owner does this, once)
 
 Players never see any of this. The game connects to one server built into it.
@@ -140,6 +154,7 @@ fun_ball_game/
   presets.py             the built-in levels
   worlds.py, storage.py  saved worlds and save files
   net.py                 online levels, multiplayer and cloud-physics client
+  updater.py             auto-update from GitHub
 server/                  Cloudflare Worker: levels API, rooms, cloud physics (JavaScript)
   achievements.py        achievements
   settings.py            all settings and colour themes
